@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Inspector</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: transparent; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(3px)} to{opacity:1;transform:translateY(0)} }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    const LINES = [
+      {text:'> agent.query("evaluate 314 Bleecker St, NYC for café concept")', type:'query', delay:600},
+      {text:'  ↳ foot_traffic_500m : 14,200/day     ✓', type:'ok',       delay:1200},
+      {text:'  ↳ car_flow_adj      : 8,400/day      ✓', type:'ok',       delay:1700},
+      {text:'  ↳ owner_history     : 2 transfers    ⚠', type:'warn',     delay:2200},
+      {text:'  ↳ zoning            : C1-6A          ✓', type:'ok',       delay:2700},
+      {text:'  ↳ demographics      : tier 2 · $112k ✓', type:'ok',       delay:3100},
+      {text:'  ↳ competition_500m  : 11 cafés       ⚠', type:'warn',     delay:3600},
+      {text:'  ↳ attractions       : 220m → WSP     ✓', type:'ok',       delay:4000},
+      {text:'  ↳ parcel_price      : $3,140/sqft',       type:'data',     delay:4400},
+      {text:'  ↳ comp_lease_avg    : $185/sqft/yr',      type:'data',     delay:4700},
+      {text:'─────────────────────────────────────',      type:'div',      delay:5100},
+      {text:'  decision: PROCEED - confidence 0.84',      type:'decision', delay:5400},
+      {text:'  recommended_action: lease, not buy',       type:'decision', delay:5700},
+    ];
+
+    // Read theme from URL param, default dark
+    const params = new URLSearchParams(window.location.search);
+    let theme = params.get('theme') === 'light' ? 'light' : 'dark';
+
+    const dark = () => theme === 'dark';
+
+    const COLORS = {
+      dark:  { query:'#A1A1AA', ok:'#7DD3FC', warn:'#F59E0B', data:'#E4E4E7', div:'#27272A', decision:'#F5F5F4', bg:'#0D0D11', border:'#27272A', label:'#52525B' },
+      light: { query:'#52525B', ok:'#0369A1', warn:'#B45309', data:'#27272A', div:'#D4D4D8', decision:'#18181B', bg:'#FFFFFF',  border:'#E4E4E7', label:'#A1A1AA' },
+    };
+
+    function c(key) { return COLORS[theme][key]; }
+
+    const root = document.getElementById('root');
+
+    function buildPanel() {
+      root.innerHTML = '';
+
+      const panel = document.createElement('div');
+      panel.style.cssText = `
+        background: ${c('bg')};
+        border: 1px solid ${c('border')};
+        border-radius: 6px;
+        padding: 14px 18px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11.5px;
+        line-height: 1.75;
+        width: 300px;
+        display: inline-block;
+      `;
+
+      // Header label
+      const label = document.createElement('div');
+      label.textContent = 'AGENT INSPECTOR · NYC';
+      label.style.cssText = `
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        color: ${c('label')};
+        margin-bottom: 6px;
+        opacity: 0.6;
+      `;
+      panel.appendChild(label);
+
+      // Line container
+      const linesEl = document.createElement('div');
+      panel.appendChild(linesEl);
+
+      // Cursor
+      const cursor = document.createElement('span');
+      cursor.textContent = '▋';
+      cursor.style.cssText = `color: ${c('ok')}; animation: blink 1s step-end infinite; display: none;`;
+      panel.appendChild(cursor);
+
+      root.appendChild(panel);
+
+      // Animate lines in
+      let loop = 0;
+      function runLoop() {
+        linesEl.innerHTML = '';
+        cursor.style.display = 'none';
+        const timers = [];
+
+        LINES.forEach((line, i) => {
+          const el = document.createElement('div');
+          el.textContent = line.text;
+          el.style.cssText = `
+            color: ${c(line.type)};
+            font-weight: ${line.type === 'decision' ? 500 : 400};
+            opacity: 0;
+            transform: translateY(3px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            ${line.type === 'div'      ? `border-top: 1px solid ${c('div')}; padding-top: 4px; margin-top: 4px;` : ''}
+            ${line.type === 'decision' ? 'margin-top: 2px;' : ''}
+          `;
+          linesEl.appendChild(el);
+
+          timers.push(setTimeout(() => {
+            el.style.opacity = '1';
+            el.style.transform = 'translateY(0)';
+            // Show cursor while typing, hide when done
+            cursor.style.display = i < LINES.length - 1 ? 'inline' : 'none';
+          }, line.delay));
+        });
+
+        // Restart loop
+        timers.push(setTimeout(() => {
+          loop++;
+          runLoop();
+        }, 8500));
+
+        return timers;
+      }
+
+      let activeTimers = runLoop();
+
+      // Listen for theme changes from parent
+      window.addEventListener('message', e => {
+        if (e.data && e.data.type === 'xmap-set-theme' && (e.data.theme === 'dark' || e.data.theme === 'light')) {
+          theme = e.data.theme;
+          activeTimers.forEach(clearTimeout);
+          buildPanel();
+        }
+      });
+    }
+
+    buildPanel();
+
+    // Report height to parent for iframe auto-sizing
+    function reportHeight() {
+      try {
+        window.parent.postMessage({ type: 'xmap-resize', height: document.body.scrollHeight }, '*');
+      } catch(e) {}
+    }
+    reportHeight();
+    new ResizeObserver(reportHeight).observe(document.body);
+  </script>
+</body>
+</html>
