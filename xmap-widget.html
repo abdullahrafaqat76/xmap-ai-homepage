@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Widget</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    @keyframes blink     { 0%,100%{opacity:1} 50%{opacity:0} }
+    @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(1.3)} }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // ── Read theme from URL param (?theme=light defaults to light) ────────────
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_THEME = urlTheme === 'light' ? 'light' : 'dark';
+
+    // ── Isometric math ────────────────────────────────────────────────────────
+    const TW = 52, TH = 26;
+    const iso = (tx, ty, tz = 0) => ({ x: (tx - ty) * TW / 2, y: (tx + ty) * TH / 2 - tz * TH });
+    const tileTop = (tx, ty, tz = 0) => {
+      const [a,b,c,d] = [[tx,ty],[tx+1,ty],[tx+1,ty+1],[tx,ty+1]].map(([x,y]) => iso(x,y,tz));
+      return `${a.x},${a.y} ${b.x},${b.y} ${c.x},${c.y} ${d.x},${d.y}`;
+    };
+    const buildLeft = (tx, ty, h) => {
+      const [a,b,c,d] = [[tx,ty+1,0],[tx+1,ty+1,0],[tx+1,ty+1,h],[tx,ty+1,h]].map(([x,y,z]) => iso(x,y,z));
+      return `${a.x},${a.y} ${b.x},${b.y} ${c.x},${c.y} ${d.x},${d.y}`;
+    };
+    const buildRight = (tx, ty, h) => {
+      const [a,b,c,d] = [[tx+1,ty,0],[tx+1,ty+1,0],[tx+1,ty+1,h],[tx+1,ty,h]].map(([x,y,z]) => iso(x,y,z));
+      return `${a.x},${a.y} ${b.x},${b.y} ${c.x},${c.y} ${d.x},${d.y}`;
+    };
+
+    // ── City data ─────────────────────────────────────────────────────────────
+    const COLS = 13, ROWS = 13;
+    const ROADS = new Set();
+    [0,4,8,12].forEach(c => { for (let r=0;r<ROWS;r++) ROADS.add(`${c},${r}`); });
+    [0,4,8,12].forEach(r => { for (let c=0;c<COLS;c++) ROADS.add(`${c},${r}`); });
+
+    const BUILDINGS = [
+      {tx:1,ty:1,h:7},{tx:2,ty:1,h:6},{tx:3,ty:1,h:5},{tx:1,ty:2,h:6},{tx:2,ty:2,h:8},{tx:3,ty:2,h:5},
+      {tx:1,ty:3,h:5},{tx:2,ty:3,h:6},{tx:3,ty:3,h:4},
+      {tx:1,ty:5,h:4},{tx:2,ty:5,h:3},{tx:3,ty:5,h:4},{tx:1,ty:6,h:3},{tx:2,ty:6,h:4},{tx:3,ty:6,h:3},
+      {tx:1,ty:7,h:3},{tx:2,ty:7,h:3},{tx:3,ty:7,h:4},
+      {tx:5,ty:5,h:3},{tx:6,ty:5,h:2},{tx:7,ty:5,h:3},{tx:5,ty:6,h:2},{tx:6,ty:6,h:3},{tx:7,ty:6,h:2},
+      {tx:5,ty:7,h:3},{tx:6,ty:7,h:2},{tx:7,ty:7,h:3},
+      {tx:5,ty:1,h:3},{tx:6,ty:1,h:4},{tx:7,ty:1,h:3},{tx:5,ty:2,h:4},{tx:6,ty:2,h:3},{tx:7,ty:2,h:4},
+      {tx:5,ty:3,h:2},{tx:6,ty:3,h:3},{tx:7,ty:3,h:2},
+      {tx:9,ty:1,h:5},{tx:10,ty:1,h:6},{tx:11,ty:1,h:4},{tx:9,ty:2,h:4},{tx:10,ty:2,h:7},{tx:11,ty:2,h:5},
+      {tx:9,ty:3,h:3},{tx:10,ty:3,h:4},{tx:11,ty:3,h:3},
+      {tx:9,ty:5,h:3},{tx:10,ty:5,h:2},{tx:11,ty:5,h:3},{tx:9,ty:6,h:2},{tx:10,ty:6,h:3},{tx:11,ty:6,h:2},
+      {tx:9,ty:7,h:3},{tx:10,ty:7,h:2},
+      {tx:1,ty:9,h:2},{tx:2,ty:9,h:3},{tx:3,ty:9,h:2},{tx:1,ty:10,h:2},{tx:2,ty:10,h:2},{tx:3,ty:10,h:3},
+      {tx:5,ty:9,h:3},{tx:6,ty:9,h:2},{tx:7,ty:9,h:2},{tx:5,ty:10,h:2},{tx:6,ty:10,h:3},
+      {tx:9,ty:9,h:2},{tx:10,ty:9,h:3},{tx:11,ty:9,h:2},{tx:9,ty:10,h:3},{tx:10,ty:10,h:2},
+    ].sort((a,b) => (a.tx+a.ty) - (b.tx+b.ty));
+
+    const POIS = [
+      {tx:2,ty:3},{tx:6,ty:6},{tx:10,ty:6},{tx:3,ty:5},{tx:7,ty:2},{tx:11,ty:5},
+      {tx:6,ty:10},{tx:2,ty:10},{tx:10,ty:10},{tx:1,ty:3},{tx:9,ty:7},{tx:5,ty:1},{tx:7,ty:7},
+    ];
+
+    const SVG_W = 560, SVG_H = 430, OX = SVG_W / 2, OY = 55;
+
+    const LAYER_DEFS = [
+      {key:'parcels',         label:'parcels'},
+      {key:'buildings',       label:'buildings'},
+      {key:'roads',           label:'roads'},
+      {key:'car_traffic',     label:'car_traffic'},
+      {key:'people_mobility', label:'people_mobility'},
+      {key:'poi',             label:'poi'},
+      {key:'demographics',    label:'demographics'},
+      {key:'parcel_price',    label:'parcel_price'},
+      {key:'competition',     label:'competition'},
+      {key:'attractions',     label:'attractions'},
+    ];
+
+    const INSP_LINES = [
+      {text:'> agent.query("evaluate 314 Bleecker St, NYC for café concept")', type:'query',    delay:600},
+      {text:'  ↳ foot_traffic_500m : 14,200/day     ✓', type:'ok',       delay:1200},
+      {text:'  ↳ car_flow_adj      : 8,400/day      ✓', type:'ok',       delay:1700},
+      {text:'  ↳ owner_history     : 2 transfers    ⚠', type:'warn',     delay:2200},
+      {text:'  ↳ zoning            : C1-6A          ✓', type:'ok',       delay:2700},
+      {text:'  ↳ demographics      : tier 2 · $112k ✓', type:'ok',       delay:3100},
+      {text:'  ↳ competition_500m  : 11 cafés       ⚠', type:'warn',     delay:3600},
+      {text:'  ↳ attractions       : 220m → WSP     ✓', type:'ok',       delay:4000},
+      {text:'  ↳ parcel_price      : $3,140/sqft',       type:'data',     delay:4400},
+      {text:'  ↳ comp_lease_avg    : $185/sqft/yr',      type:'data',     delay:4700},
+      {text:'─────────────────────────────────────',      type:'div',      delay:5100},
+      {text:'  decision: PROCEED - confidence 0.84',      type:'decision', delay:5400},
+      {text:'  recommended_action: lease, not buy',       type:'decision', delay:5700},
+    ];
+
+    // ── Layer panel ───────────────────────────────────────────────────────────
+    function LayerPanel({ layers, onToggle, dark }) {
+      return (
+        <div style={{
+          background: dark ? 'rgba(10,10,11,0.92)' : 'rgba(250,250,249,0.95)',
+          border: `1px solid ${dark ? '#27272A' : '#E4E4E7'}`,
+          borderRadius: 6, padding: '12px 14px',
+          backdropFilter: 'blur(12px)',
+          minWidth: 168,
+        }}>
+          <div style={{
+            fontSize: 9, letterSpacing: '0.12em',
+            color: dark ? '#52525B' : '#A1A1AA',
+            marginBottom: 10, textTransform: 'uppercase',
+          }}>LAYERS</div>
+          {LAYER_DEFS.map(({key, label}) => (
+            <div key={key} onClick={() => onToggle(key)} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginBottom: 6, cursor: 'pointer',
+              opacity: layers[key] ? 1 : 0.4,
+              transition: 'opacity 0.2s',
+            }}>
+              <div style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: layers[key] ? (dark ? '#7DD3FC' : '#0369A1') : 'transparent',
+                border: `1.5px solid ${dark ? '#7DD3FC' : '#0369A1'}`,
+                flexShrink: 0, transition: 'background 0.2s',
+              }}/>
+              <span style={{ fontSize: 10.5, color: dark ? '#A1A1AA' : '#52525B' }}>{label}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── Isometric map ─────────────────────────────────────────────────────────
+    function IsoMap({ layers, dark, tick }) {
+      const clr = {
+        road:       dark ? '#3F3F46' : '#A1A1AA',
+        parcel:     dark ? '#27272A' : '#E4E4E7',
+        water:      dark ? '#1a2030' : '#D4E4F0',
+        buildLeft:  dark ? '#1a1a1f' : '#D4D4D8',
+        buildRight: dark ? '#141418' : '#C8C8CC',
+        buildTop:   dark ? '#2a2a32' : '#ECECF0',
+        poi:        dark ? '#7DD3FC' : '#0369A1',
+      };
+
+      const agentPath = [{tx:6,ty:2},{tx:5,ty:2},{tx:6,ty:3},{tx:7,ty:2},{tx:6,ty:6}];
+      const [agentIdx, setAgentIdx] = useState(0);
+      useEffect(() => {
+        const id = setInterval(() => setAgentIdx(i => (i+1) % agentPath.length), 2200);
+        return () => clearInterval(id);
+      }, []);
+      const ap = agentPath[agentIdx];
+      const agentPt = iso(ap.tx+0.5, ap.ty+0.5, 0);
+      const agentX = OX + agentPt.x, agentY = OY + agentPt.y;
+
+      const trafficLines = [
+        {col:4,speed:0.012,off:0.3},{col:8,speed:0.009,off:0.1},{col:0,speed:0.011,off:0.6},
+        {row:4,speed:0.013,off:0.4},{row:8,speed:0.008,off:0.2},{row:0,speed:0.010,off:0.8},
+        {col:12,speed:0.014,off:0.5},{row:12,speed:0.009,off:0.7},
+      ];
+
+      const poly = s => s.replace(/(-?\d+\.?\d*),(-?\d+\.?\d*)/g,
+        (_,x,y) => `${OX+parseFloat(x)},${OY+parseFloat(y)}`);
+
+      return (
+        <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} style={{width:'100%',height:'100%'}} xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="gp"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="ga"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <radialGradient id="hg" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor={clr.poi} stopOpacity="0.22"/>
+              <stop offset="100%" stopColor={clr.poi} stopOpacity="0"/>
+            </radialGradient>
+            <radialGradient id="mob" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor={dark?'#F59E0B':'#B45309'} stopOpacity="0.3"/>
+              <stop offset="100%" stopColor={dark?'#F59E0B':'#B45309'} stopOpacity="0"/>
+            </radialGradient>
+          </defs>
+
+          {layers.parcels && Array.from({length:ROWS},(_,r) => Array.from({length:COLS},(_,c) => {
+            const key=`${c},${r}`, isRoad=ROADS.has(key), isWater=c===0&&!isRoad;
+            return <polygon key={key} points={poly(tileTop(c,r,0))}
+              fill={isWater?clr.water:isRoad?clr.road:clr.parcel}
+              stroke={dark?'#0a0a0b':'#fafaf9'} strokeWidth="0.5"/>;
+          }))}
+
+          {layers.roads && Array.from({length:ROWS},(_,r) => Array.from({length:COLS},(_,c) => {
+            if (!ROADS.has(`${c},${r}`)) return null;
+            return <polygon key={`r${c}${r}`} points={poly(tileTop(c,r,0))}
+              fill={dark?'#48484f':'#b8b8be'} stroke={dark?'#0a0a0b':'#fafaf9'} strokeWidth="0.5" opacity="0.3"/>;
+          }))}
+
+          {layers.buildings && BUILDINGS.map(({tx,ty,h}) => (
+            <g key={`b${tx}${ty}`}>
+              <polygon points={poly(buildLeft(tx,ty,h))}  fill={clr.buildLeft}  stroke={dark?'#0a0a0b':'#fafaf9'} strokeWidth="0.5"/>
+              <polygon points={poly(buildRight(tx,ty,h))} fill={clr.buildRight} stroke={dark?'#0a0a0b':'#fafaf9'} strokeWidth="0.5"/>
+              <polygon points={poly(tileTop(tx,ty,h))}    fill={clr.buildTop}   stroke={dark?'#0a0a0b':'#fafaf9'} strokeWidth="0.5"/>
+            </g>
+          ))}
+
+          {layers.demographics && (
+            <g opacity="0.65">
+              {[{cx:OX-60,cy:OY+130},{cx:OX+10,cy:OY+160},{cx:OX-30,cy:OY+220}].map((p,i) => (
+                <ellipse key={i} cx={p.cx} cy={p.cy} rx={90} ry={38} fill="url(#hg)"/>
+              ))}
+            </g>
+          )}
+
+          {layers.people_mobility && (
+            <g opacity="0.7">
+              {[{cx:OX-20,cy:OY+100},{cx:OX+60,cy:OY+160},{cx:OX-80,cy:OY+200}].map((p,i) => (
+                <ellipse key={i} cx={p.cx} cy={p.cy} rx={70} ry={30} fill="url(#mob)"/>
+              ))}
+            </g>
+          )}
+
+          {layers.car_traffic && trafficLines.map((p,i) => {
+            const t = ((tick*(p.speed||0.01) + p.off) % 1);
+            const pos = t*(ROWS-1);
+            let cx, cy;
+            if (p.col !== undefined) { const pt=iso(p.col+0.5,pos,0); cx=OX+pt.x; cy=OY+pt.y; }
+            else                      { const pt=iso(pos,p.row+0.5,0); cx=OX+pt.x; cy=OY+pt.y; }
+            return <circle key={i} cx={cx} cy={cy} r={2.5} fill={dark?'#F59E0B':'#B45309'} opacity="0.9"/>;
+          })}
+
+          {layers.poi && (
+            <g filter="url(#gp)">
+              {POIS.map((poi,i) => {
+                const pt=iso(poi.tx+0.5,poi.ty+0.5,0);
+                const cx=OX+pt.x, cy=OY+pt.y;
+                const p=Math.sin(tick*0.08+i*0.9)*0.4+0.7;
+                return <g key={i}>
+                  <circle cx={cx} cy={cy} r={6} fill={clr.poi} opacity={0.12*p}/>
+                  <circle cx={cx} cy={cy} r={3} fill={clr.poi} opacity="0.85"/>
+                </g>;
+              })}
+            </g>
+          )}
+
+          {layers.parcel_price && [
+            {tx:6,ty:2,price:'$3,140'},{tx:2,ty:2,price:'$4,820'},{tx:10,ty:2,price:'$2,210'},
+            {tx:6,ty:6,price:'$2,890'},{tx:10,ty:6,price:'$1,940'},
+          ].map(({tx,ty,price},i) => {
+            const pt=iso(tx+0.5,ty+0.5,0);
+            return <g key={i}>
+              <rect x={OX+pt.x-22} y={OY+pt.y-16} width={44} height={14} rx={2}
+                fill={dark?'rgba(10,10,11,0.85)':'rgba(250,250,249,0.9)'}
+                stroke={dark?'#27272A':'#E4E4E7'} strokeWidth="0.5"/>
+              <text x={OX+pt.x} y={OY+pt.y-5} textAnchor="middle"
+                fontFamily="JetBrains Mono,monospace" fontSize="7.5"
+                fill={dark?'#7DD3FC':'#0369A1'}>{price}</text>
+            </g>;
+          })}
+
+          {layers.attractions && (
+            <g opacity="0.4">
+              {[{r:40},{r:65},{r:90}].map(({r},i) => {
+                const pt=iso(6.5,2.5,0);
+                return <circle key={i} cx={OX+pt.x} cy={OY+pt.y} r={r}
+                  fill="none" stroke={dark?'#7DD3FC':'#0369A1'}
+                  strokeWidth="1" strokeDasharray="4 3" opacity="0.45"/>;
+              })}
+            </g>
+          )}
+
+          {layers.competition && POIS.slice(0,6).map((poi,i) => {
+            if (i===0) return null;
+            const a=iso(POIS[0].tx+0.5,POIS[0].ty+0.5,0);
+            const b=iso(poi.tx+0.5,poi.ty+0.5,0);
+            return <line key={i} x1={OX+a.x} y1={OY+a.y} x2={OX+b.x} y2={OY+b.y}
+              stroke={dark?'#F59E0B':'#B45309'} strokeWidth="0.75" strokeDasharray="3 2" opacity="0.5"/>;
+          })}
+
+          {layers.parcels && (
+            <g filter="url(#ga)">
+              <circle cx={agentX} cy={agentY} r={15} fill="none"
+                stroke={clr.poi} strokeWidth="1.5" opacity="0.9"
+                style={{transition:'cx 1.4s ease,cy 1.4s ease'}}/>
+              <circle cx={agentX} cy={agentY} r={3} fill={clr.poi} opacity="0.85"
+                style={{transition:'cx 1.4s ease,cy 1.4s ease'}}/>
+              <line x1={agentX} y1={agentY} x2={SVG_W-10} y2={SVG_H*0.22}
+                stroke={clr.poi} strokeWidth="0.8" strokeDasharray="4 3" opacity="0.4"
+                style={{transition:'x1 1.4s ease,y1 1.4s ease'}}/>
+            </g>
+          )}
+        </svg>
+      );
+    }
+
+    // ── Inspector panel ───────────────────────────────────────────────────────
+    function Inspector({ dark }) {
+      const [visible, setVisible] = useState([]);
+      const [loop, setLoop] = useState(0);
+
+      useEffect(() => {
+        setVisible([]);
+        const timers  = INSP_LINES.map((l,i) => setTimeout(() => setVisible(v => [...v,i]), l.delay));
+        const restart = setTimeout(() => setLoop(n => n+1), 8500);
+        return () => { timers.forEach(clearTimeout); clearTimeout(restart); };
+      }, [loop]);
+
+      const c = {
+        query:    dark ? '#A1A1AA' : '#52525B',
+        ok:       dark ? '#7DD3FC' : '#0369A1',
+        warn:     dark ? '#F59E0B' : '#B45309',
+        data:     dark ? '#E4E4E7' : '#27272A',
+        div:      dark ? '#27272A' : '#D4D4D8',
+        decision: dark ? '#F5F5F4' : '#18181B',
+        bg:       dark ? '#0D0D11' : '#FFFFFF',
+        border:   dark ? '#27272A' : '#E4E4E7',
+        label:    dark ? '#52525B' : '#A1A1AA',
+      };
+
+      return (
+        <div style={{
+          background: c.bg, border: `1px solid ${c.border}`,
+          borderRadius: 6, padding: '14px 18px',
+          fontSize: 11.5, lineHeight: 1.75, width: 300,
+        }}>
+          <div style={{fontSize:9, letterSpacing:'0.1em', color:c.label, marginBottom:6, opacity:0.6}}>
+            AGENT INSPECTOR · NYC
+          </div>
+          {INSP_LINES.map((l,i) => (
+            <div key={`${loop}-${i}`} style={{
+              color: c[l.type],
+              fontWeight: l.type==='decision' ? 500 : 400,
+              marginTop: l.type==='div' ? 4 : l.type==='decision' ? 2 : 0,
+              opacity: visible.includes(i) ? 1 : 0,
+              transform: visible.includes(i) ? 'translateY(0)' : 'translateY(3px)',
+              transition: 'opacity 0.25s ease, transform 0.25s ease',
+              borderTop: l.type==='div' ? `1px solid ${c.div}` : 'none',
+              paddingTop: l.type==='div' ? 4 : 0,
+            }}>{l.text}</div>
+          ))}
+          {visible.length > 0 && visible.length < INSP_LINES.length && (
+            <span style={{color:c.ok, animation:'blink 1s step-end infinite'}}>▋</span>
+          )}
+        </div>
+      );
+    }
+
+    // ── Root widget ───────────────────────────────────────────────────────────
+    function Widget() {
+      const [dark, setDark] = useState(INIT_THEME === 'dark');
+      const [tick, setTick] = useState(0);
+      const [layers, setLayers] = useState({
+        parcels: true, buildings: true, roads: true, car_traffic: true,
+        people_mobility: false, poi: true, demographics: false,
+        parcel_price: false, competition: false, attractions: false,
+      });
+
+      // Animation tick
+      useEffect(() => {
+        const id = setInterval(() => setTick(t => t+1), 80);
+        return () => clearInterval(id);
+      }, []);
+
+      // Listen for theme from parent Webflow page
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') {
+            setDark(e.data.theme === 'dark');
+          }
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      // Report height to parent for iframe auto-sizing
+      useEffect(() => {
+        const report = () => {
+          try { window.parent.postMessage({type:'xmap-resize', height: document.body.scrollHeight}, '*'); } catch(e) {}
+        };
+        report();
+        new ResizeObserver(report).observe(document.body);
+      }, []);
+
+      const toggleLayer = key => setLayers(l => ({...l, [key]: !l[key]}));
+
+      return (
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          height: '520px',
+          overflow: 'hidden',
+          background: dark
+            ? 'radial-gradient(ellipse 80% 60% at 55% 40%, rgba(125,211,252,0.04) 0%, transparent 70%)'
+            : 'radial-gradient(ellipse 80% 60% at 55% 40%, rgba(3,105,161,0.03) 0%, transparent 70%)',
+        }}>
+
+          {/* Isometric map — left/center */}
+          <div style={{
+            position: 'absolute',
+            left: 0, top: '50%',
+            transform: 'translateY(-50%)',
+            width: '62%',
+            aspectRatio: '1.3/1',
+          }}>
+            <IsoMap layers={layers} dark={dark} tick={tick}/>
+          </div>
+
+          {/* Layer toggle — bottom left */}
+          <div style={{position:'absolute', bottom:16, left:16, zIndex:10}}>
+            <LayerPanel layers={layers} onToggle={toggleLayer} dark={dark}/>
+          </div>
+
+          {/* Inspector — right side, vertically centered */}
+          <div style={{
+            position: 'absolute',
+            right: 16, top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 10,
+          }}>
+            <Inspector dark={dark}/>
+          </div>
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
