@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap POI Live</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      -webkit-font-smoothing: antialiased;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_DARK = urlTheme !== 'light';
+
+    const CATEGORIES = [
+      { color:'#6b8cff', label:'POI',      pts:[[60,60],[120,40],[180,70],[240,30],[300,55],[360,45],[420,65],[90,100],[200,95],[330,80],[60,140],[160,130],[280,125],[400,110],[120,170],[240,160],[380,155],[80,200],[200,190],[340,185],[460,195],[110,230],[270,225],[420,220]] },
+      { color:'#F59E0B', label:'Traffic',  pts:[[150,50],[270,75],[390,50],[480,85],[150,120],[300,140],[450,130]] },
+      { color:'#34D399', label:'Mobility', pts:[[70,80],[190,110],[310,100],[430,90],[70,170],[210,165],[360,175]] },
+      { color:'#F472B6', label:'Parcel',   pts:[[100,145],[230,155],[370,148],[490,160],[140,205],[290,210],[430,205]] },
+    ];
+
+    function Widget() {
+      const [dark, setDark]   = useState(INIT_DARK);
+      const [tick, setTick]   = useState(0);
+      const [count, setCount] = useState(24218394);
+
+      useEffect(() => {
+        const id = setInterval(() => setTick(t => t + 1), 80);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        const id = setInterval(() => setCount(c => c + Math.floor(Math.random() * 120 + 30)), 1800);
+        return () => clearInterval(id);
+      }, []);
+
+      // Listen for theme from parent Webflow page
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') setDark(e.data.theme === 'dark');
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      // Report height to parent for iframe auto-sizing
+      useEffect(() => {
+        const report = () => {
+          try { window.parent.postMessage({ type: 'xmap-resize', height: document.body.scrollHeight }, '*'); } catch(e) {}
+        };
+        report();
+        new ResizeObserver(report).observe(document.body);
+      }, []);
+
+      const accent       = dark ? '#6b8cff' : '#233e99';
+      const bg           = dark ? '#0D0D11' : '#FFFFFF';
+      const border       = dark ? '#27272A' : '#E4E4E7';
+      const gridLine     = dark ? '#1a1a20' : '#e8e8ec';
+      const labelColor   = dark ? '#52525B' : '#A1A1AA';
+      const counterColor = dark ? 'rgba(10,10,11,0.85)' : 'rgba(255,255,255,0.95)';
+      const tagBg        = dark ? '#233e99' : '#233e99';
+      const searchR      = 30 + Math.sin(tick * 0.04) * 20;
+      const searchOp     = 0.3 + Math.sin(tick * 0.04) * 0.2;
+
+      return (
+        <div style={{
+          width: '100%', height: '100vh',
+          background: bg,
+          border: `1px solid ${border}`,
+          borderRadius: 8,
+          overflow: 'hidden',
+          position: 'relative',
+          transition: 'background 0.3s, border-color 0.3s',
+        }}>
+          <svg
+            viewBox="0 0 540 300"
+            style={{ width: '100%', height: '100%', display: 'block' }}
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <defs>
+              <filter id="poi-glow">
+                <feGaussianBlur stdDeviation="3" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+
+            {/* Grid */}
+            {[0,1,2,3,4,5,6,7,8,9].map(i =>
+              <line key={`v${i}`} x1={54*i} y1="0" x2={54*i} y2="300" stroke={gridLine} strokeWidth="1"/>
+            )}
+            {[0,1,2,3,4,5,6].map(i =>
+              <line key={`h${i}`} x1="0" y1={50*i} x2="540" y2={50*i} stroke={gridLine} strokeWidth="1"/>
+            )}
+
+            {/* Search radius rings */}
+            <circle cx="270" cy="150" r={searchR*2.5} fill="none" stroke={accent} strokeWidth="1" opacity={searchOp*0.5} strokeDasharray="5 3"/>
+            <circle cx="270" cy="150" r={searchR*1.5} fill="none" stroke={accent} strokeWidth="1" opacity={searchOp*0.8} strokeDasharray="3 2"/>
+            <circle cx="270" cy="150" r={searchR}     fill={accent} opacity={searchOp*0.15}/>
+
+            {/* Category dots */}
+            {CATEGORIES.map((cat, ci) =>
+              cat.pts.map(([cx, cy], j) => {
+                const pulse = 0.5 + Math.sin(tick * 0.06 + ci * 1.5 + j * 0.4) * 0.45;
+                return (
+                  <circle
+                    key={`${ci}-${j}`}
+                    cx={cx} cy={cy} r={3.5}
+                    fill={cat.color}
+                    opacity={pulse}
+                    filter="url(#poi-glow)"
+                  />
+                );
+              })
+            )}
+
+            {/* Center pin */}
+            <circle cx="270" cy="150" r={9}  fill={accent} opacity="0.2" filter="url(#poi-glow)"/>
+            <circle cx="270" cy="150" r={7}  fill={accent} opacity="0.95" filter="url(#poi-glow)"/>
+            <circle cx="270" cy="150" r={3}  fill="#fff"/>
+
+            {/* POIs INDEXED counter — top left */}
+            <rect x="10" y="10" width="200" height="48" rx="4"
+              fill={counterColor} stroke={border} strokeWidth="1"/>
+            <text x="20" y="26"
+              fontFamily="JetBrains Mono,monospace" fontSize="9"
+              fill={labelColor} letterSpacing="0.08em">POIs INDEXED</text>
+            <text x="20" y="46"
+              fontFamily="JetBrains Mono,monospace" fontSize="16"
+              fill={accent} fontWeight="500">{count.toLocaleString()}</text>
+
+            {/* POI · LIVE badge — bottom right */}
+            <rect x="390" y="260" width="140" height="30" rx="4" fill={tagBg}/>
+            <circle cx="414" cy="275" r="4" fill="#fff" opacity="0.9"/>
+            <circle cx="414" cy="275" r="2" fill={tagBg}/>
+            <text x="424" y="280"
+              fontFamily="JetBrains Mono,monospace" fontSize="11"
+              fill="#fff" fontWeight="500" letterSpacing="0.06em">POI · LIVE</text>
+          </svg>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
