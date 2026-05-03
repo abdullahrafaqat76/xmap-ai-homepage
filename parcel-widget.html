@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Parcel Live</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      -webkit-font-smoothing: antialiased;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.92); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    @keyframes popIn {
+      0%   { opacity: 0; transform: translateY(-6px) scale(0.9); }
+      60%  { transform: translateY(2px) scale(1.04); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_DARK = urlTheme === 'dark';
+
+    // 5×5 grid layout matching the screenshot
+    const GRID = [
+      ['corporate','individual','fund',       'corporate','govt'      ],
+      ['fund',      'corporate','individual',  'fund',     'corporate' ],
+      ['individual','govt',     'corporate',   'individual','fund'     ],
+      ['corporate', 'fund',     'govt',        'corporate','individual'],
+      ['govt',      'individual','fund',       'govt',     'fund'      ],
+    ];
+
+    // Price tags: [row, col, price]
+    const PRICES = [
+      [0, 0, '$3,140'],
+      [0, 2, '$2,890'],
+      [1, 4, '$4,210'],
+      [2, 1, '$1,940'],
+      [3, 3, '$3,580'],
+    ];
+
+    const OWNER_COLORS = {
+      corporate: { light: '#818CF8', dark: '#6366F1' }, // indigo/blue
+      individual: { light: '#34D399', dark: '#10B981' }, // green
+      govt:       { light: '#FBBF24', dark: '#F59E0B' }, // amber
+      fund:       { light: '#C4B5FD', dark: '#A78BFA' }, // purple
+    };
+
+    const OWNER_LABEL = {
+      corporate: 'CORP',
+      individual: 'INDI',
+      govt: 'GOVT',
+      fund: 'FUND',
+    };
+
+    const LEGEND = [
+      { key: 'corporate', label: 'Corporate' },
+      { key: 'individual', label: 'Individual' },
+      { key: 'govt',       label: 'Govt'       },
+      { key: 'fund',       label: 'Fund'       },
+    ];
+
+    function Widget() {
+      const [dark, setDark] = useState(INIT_DARK);
+      // Reveal parcels one by one on mount, then loop
+      const [revealed, setRevealed] = useState(0);
+      const [loop, setLoop] = useState(0);
+
+      useEffect(() => {
+        setRevealed(0);
+        const total = 25;
+        const timers = Array.from({ length: total }, (_, i) =>
+          setTimeout(() => setRevealed(i + 1), 120 + i * 90)
+        );
+        // After all revealed, pause then restart
+        const restart = setTimeout(() => setLoop(l => l + 1), 120 + total * 90 + 1800);
+        return () => { timers.forEach(clearTimeout); clearTimeout(restart); };
+      }, [loop]);
+
+      // Price tags pop in after their parcel is revealed
+      const priceRevealIndex = (r, c) => r * 5 + c;
+
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') setDark(e.data.theme === 'dark');
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      useEffect(() => {
+        const report = () => {
+          try { window.parent.postMessage({ type: 'xmap-resize', height: document.body.scrollHeight }, '*'); } catch(e) {}
+        };
+        report();
+        new ResizeObserver(report).observe(document.body);
+      }, []);
+
+      const bg         = dark ? '#0D0D11' : '#FFFFFF';
+      const border     = dark ? '#27272A' : '#E4E4E7';
+      const legendBg   = dark ? 'rgba(15,15,20,0.95)' : 'rgba(255,255,255,0.97)';
+      const labelText  = dark ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.7)';
+      const priceText  = dark ? '#A78BFA' : '#7C3AED';
+      const priceBorder= dark ? '#7C3AED' : '#A78BFA';
+      const priceBg    = dark ? 'rgba(13,13,17,0.92)' : 'rgba(255,255,255,0.95)';
+      const tagBg      = dark ? '#7C3AED' : '#7C3AED';
+
+      const GAP  = 6;   // px gap between cells
+      const COLS = 5;
+      const ROWS = 5;
+
+      return (
+        <div style={{
+          width: '100%',
+          height: '100vh',
+          background: bg,
+          border: `1px solid ${border}`,
+          borderRadius: 8,
+          overflow: 'hidden',
+          position: 'relative',
+          transition: 'background 0.3s, border-color 0.3s',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: 24,
+          paddingTop: 52,
+        }}>
+
+          {/* Grid */}
+          <div style={{
+            flex: 1,
+            display: 'grid',
+            gridTemplateColumns: `repeat(${COLS}, 1fr)`,
+            gridTemplateRows: `repeat(${ROWS}, 1fr)`,
+            gap: GAP,
+            position: 'relative',
+          }}>
+            {GRID.map((row, r) =>
+              row.map((type, c) => {
+                const idx      = r * COLS + c;
+                const isShown  = revealed > idx;
+                const color    = OWNER_COLORS[type][dark ? 'dark' : 'light'];
+                const priceEntry = PRICES.find(([pr, pc]) => pr === r && pc === c);
+                const priceShown = priceEntry && revealed > priceRevealIndex(r, c) + 2;
+
+                return (
+                  <div key={`${loop}-${r}-${c}`} style={{
+                    background: color,
+                    borderRadius: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    opacity: isShown ? 1 : 0,
+                    transform: isShown ? 'scale(1)' : 'scale(0.92)',
+                    transition: 'opacity 0.25s ease, transform 0.25s ease',
+                    minHeight: 0,
+                  }}>
+                    {/* Owner label */}
+                    <span style={{
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 'clamp(9px, 1.1vw, 14px)',
+                      fontWeight: 400,
+                      color: labelText,
+                      letterSpacing: '0.08em',
+                      userSelect: 'none',
+                    }}>{OWNER_LABEL[type]}</span>
+
+                    {/* Price tag */}
+                    {priceEntry && (
+                      <div style={{
+                        position: 'absolute',
+                        bottom: -14,
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        background: priceBg,
+                        border: `1.5px solid ${priceBorder}`,
+                        borderRadius: 4,
+                        padding: '3px 10px',
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: 'clamp(9px, 1vw, 13px)',
+                        fontWeight: 500,
+                        color: priceText,
+                        whiteSpace: 'nowrap',
+                        zIndex: 10,
+                        opacity: priceShown ? 1 : 0,
+                        animation: priceShown ? 'popIn 0.35s ease forwards' : 'none',
+                      }}>{priceEntry[2]}</div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Legend — top right, absolutely positioned */}
+          <div style={{
+            position: 'absolute',
+            top: 16,
+            right: 20,
+            background: legendBg,
+            border: `1px solid ${border}`,
+            borderRadius: 6,
+            padding: '14px 20px',
+            zIndex: 20,
+          }}>
+            {LEGEND.map(({ key, label }) => (
+              <div key={key} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginBottom: 8,
+                lineHeight: 1,
+              }}>
+                <div style={{
+                  width: 14, height: 14,
+                  borderRadius: 3,
+                  background: OWNER_COLORS[key][dark ? 'dark' : 'light'],
+                  flexShrink: 0,
+                }}/>
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 14,
+                  color: dark ? '#A1A1AA' : '#52525B',
+                }}>{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* PARCEL · LIVE badge — bottom right */}
+          <div style={{
+            position: 'absolute',
+            bottom: 20,
+            right: 20,
+            background: tagBg,
+            borderRadius: 6,
+            padding: '10px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            zIndex: 20,
+          }}>
+            <div style={{
+              width: 10, height: 10, borderRadius: '50%',
+              background: '#fff', opacity: 0.9,
+            }}/>
+            <span style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 15,
+              fontWeight: 500,
+              color: '#fff',
+              letterSpacing: '0.06em',
+            }}>PARCEL · LIVE</span>
+          </div>
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
