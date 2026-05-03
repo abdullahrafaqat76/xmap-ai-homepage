@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Car Traffic Live</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      -webkit-font-smoothing: antialiased;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_DARK = urlTheme === 'dark';
+
+    const W = 1160, H = 720;
+
+    const ROADS = [
+      { x1:0,   y1:210, x2:W,   y2:210, type:'highway', label:'FDR Drive', speed:'72mph' },
+      { x1:0,   y1:355, x2:W,   y2:355, type:'arterial', label:'Broadway',  speed:'28mph' },
+      { x1:0,   y1:493, x2:W,   y2:493, type:'local',    label:'W.4th St',  speed:'12mph' },
+      { x1:310, y1:0,   x2:310, y2:H,   type:'arterial', label:'8th Ave',   speed:'24mph' },
+      { x1:660, y1:0,   x2:660, y2:H,   type:'highway',  label:'I-278',     speed:'58mph' },
+      { x1:940, y1:0,   x2:940, y2:H,   type:'local',    label:'LES Grid',  speed:'9mph'  },
+    ];
+
+    const TYPE_COLOR = { highway:'#22C55E', arterial:'#F59E0B', local:'#EF4444' };
+    const TYPE_WIDTH = { highway: 18, arterial: 12, local: 7 };
+    const TYPE_SPEED = { highway: 2.6, arterial: 1.5, local: 0.75 };
+
+    function Widget() {
+      const [dark, setDark] = useState(INIT_DARK);
+      const [tick, setTick] = useState(0);
+
+      useEffect(() => {
+        const id = setInterval(() => setTick(t => t + 1), 80);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') setDark(e.data.theme === 'dark');
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      useEffect(() => {
+        const report = () => {
+          try { window.parent.postMessage({ type: 'xmap-resize', height: document.body.scrollHeight }, '*'); } catch(e) {}
+        };
+        report();
+        new ResizeObserver(report).observe(document.body);
+      }, []);
+
+      const bg         = dark ? '#0D0D11' : '#FFFFFF';
+      const border     = dark ? '#27272A' : '#E4E4E7';
+      const roadBg     = dark ? '#1C1C22' : '#EEEEF2';
+      const labelColor = dark ? '#52525B' : '#A1A1AA';
+      const legendBg   = dark ? 'rgba(10,10,11,0.88)' : 'rgba(255,255,255,0.95)';
+
+      return (
+        <div style={{
+          width: '100%', height: '100vh',
+          background: bg,
+          border: `1px solid ${border}`,
+          borderRadius: 8,
+          overflow: 'hidden',
+          transition: 'background 0.3s, border-color 0.3s',
+        }}>
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            style={{ width: '100%', height: '100%', display: 'block' }}
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <defs>
+              <filter id="tf-glow">
+                <feGaussianBlur stdDeviation="4" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+
+            {/* Road backgrounds (slightly wider, muted) */}
+            {ROADS.map((r, i) => (
+              <line key={`bg${i}`}
+                x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2}
+                stroke={roadBg}
+                strokeWidth={TYPE_WIDTH[r.type] + 8}/>
+            ))}
+
+            {/* Road surfaces (colored) */}
+            {ROADS.map((r, i) => (
+              <line key={`rd${i}`}
+                x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2}
+                stroke={TYPE_COLOR[r.type]}
+                strokeWidth={TYPE_WIDTH[r.type]}
+                opacity={0.55}/>
+            ))}
+
+            {/* Road labels — horizontal roads only, left-anchored */}
+            {ROADS.filter(r => r.y1 === r.y2).map((r, i) => (
+              <text key={`lbl${i}`}
+                x={22} y={r.y1 - 10}
+                fontFamily="JetBrains Mono, monospace"
+                fontSize="20"
+                fill={TYPE_COLOR[r.type]}
+                opacity="0.75"
+              >{r.label} · {r.speed}</text>
+            ))}
+
+            {/* Traffic particles — 3 per road, staggered */}
+            {ROADS.map((r, ri) => {
+              const isH  = r.y1 === r.y2;
+              const spd  = TYPE_SPEED[r.type];
+              const len  = isH ? W : H;
+              const col  = TYPE_COLOR[r.type];
+              const w    = TYPE_WIDTH[r.type];
+
+              return [0, 1, 2].map(j => {
+                const t   = ((tick * spd * 0.007 + ri * 0.28 + j * 0.33) % 1);
+                const rev = (ri + j) % 2 === 0;
+                const pos = rev ? (1 - t) * len : t * len;
+                const cx  = isH ? pos : r.x1;
+                const cy  = isH ? r.y1 : pos;
+                const r2  = w * 0.55;
+
+                return (
+                  <circle key={`${ri}-${j}`}
+                    cx={cx} cy={cy} r={r2}
+                    fill={col}
+                    opacity="0.95"
+                    filter="url(#tf-glow)"
+                  />
+                );
+              });
+            })}
+
+            {/* Legend — top left */}
+            <rect x="20" y="20" width="330" height="170" rx="6"
+              fill={legendBg} stroke={border} strokeWidth="1.5"/>
+            {[
+              { c:'#22C55E', l:'Highway · free flow'  },
+              { c:'#F59E0B', l:'Arterial · moderate'  },
+              { c:'#EF4444', l:'Local · congested'     },
+            ].map((item, i) => (
+              <g key={i}>
+                <circle cx={44} cy={68 + i * 46} r={10} fill={item.c}/>
+                <text x={64} y={74 + i * 46}
+                  fontFamily="JetBrains Mono, monospace"
+                  fontSize="22"
+                  fill={dark ? '#A1A1AA' : '#52525B'}
+                >{item.l}</text>
+              </g>
+            ))}
+
+            {/* CAR TRAFFIC · LIVE badge — bottom right */}
+            <rect x={W - 340} y={H - 76} width="318" height="54" rx="6"
+              fill={TYPE_COLOR.highway}/>
+            <circle cx={W - 316} cy={H - 49} r="8"  fill="#fff" opacity="0.9"/>
+            <circle cx={W - 316} cy={H - 49} r="4"  fill={TYPE_COLOR.highway}/>
+            <text x={W - 298} y={H - 41}
+              fontFamily="JetBrains Mono, monospace"
+              fontSize="22"
+              fill="#fff" fontWeight="500" letterSpacing="0.06em">CAR TRAFFIC · LIVE</text>
+          </svg>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
