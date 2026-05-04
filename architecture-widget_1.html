@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: transparent; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_DARK = urlTheme === 'dark';
+
+    const SOURCES = ['Satellite imagery', 'Mobile SDK panels', 'Public records', 'Partner feeds', 'Gov. data'];
+    const LAYERS  = [
+      { label: 'POI',          color: '#7DD3FC' },
+      { label: 'Car Traffic',  color: '#F59E0B' },
+      { label: 'GPS Mobility', color: '#F472B6' },
+      { label: 'Parcel',       color: '#FBBF24' },
+      { label: 'Demographics', color: '#C4B5FD' },
+    ];
+    const OUTPUTS = ['MCP Server', 'REST + GraphQL', 'SQL / Warehouse'];
+    const OUTPUT_TARGET_LAYER = [0, 2, 4]; // which layer each output connects to
+
+    const W = 900, H = 300;
+    const SRC_X = 20,  SRC_W = 175, SRC_H = 22;
+    const LYR_X = 320, LYR_W = 260, LYR_H = 26;
+    const OUT_X = 710, OUT_W = 170, OUT_H = 26;
+    const N_SRC = SOURCES.length;
+    const N_LYR = LAYERS.length;
+    const N_OUT = OUTPUTS.length;
+
+    const srcY = i => 42 + i * ((H - 80) / (N_SRC - 1));
+    const lyrY = i => 42 + i * ((H - 80) / (N_LYR - 1));
+    const outY = i => 75 + i * ((H - 140) / (N_OUT - 1));
+
+    // Each particle has its own independent speed + phase
+    // src→layer: one particle per (source, layer) combo = 25 total, but we only show 1 per source, cycling layers
+    const SRC_PARTICLES = SOURCES.map((_, si) => ({
+      si,
+      li: si % N_LYR,
+      speed: 0.045 + si * 0.008,   // fast
+      phase: si * 0.2,
+    }));
+
+    // extra staggered particles on same paths for density
+    const SRC_PARTICLES2 = SOURCES.map((_, si) => ({
+      si,
+      li: (si + 2) % N_LYR,
+      speed: 0.038 + si * 0.006,
+      phase: si * 0.2 + 0.5,
+    }));
+
+    const OUT_PARTICLES = OUTPUTS.map((_, oi) => ({
+      oi,
+      li: OUTPUT_TARGET_LAYER[oi],
+      speed: 0.05 + oi * 0.01,
+      phase: oi * 0.33,
+    }));
+
+    function Widget() {
+      const [dark, setDark]     = useState(INIT_DARK);
+      const [tick, setTick]     = useState(0);
+      const [hoverLayer, setHL] = useState(null);
+
+      useEffect(() => {
+        // 60fps, particles use tick directly — speed multiplied in formula
+        const id = setInterval(() => setTick(t => t + 1), 16);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') setDark(e.data.theme === 'dark');
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      useEffect(() => {
+        const report = () => {
+          try { window.parent.postMessage({ type: 'xmap-resize', height: document.body.scrollHeight }, '*'); } catch(e) {}
+        };
+        report();
+        new ResizeObserver(report).observe(document.body);
+      }, []);
+
+      const bg       = dark ? '#0D0D11' : '#F4F4F5';
+      const bdr      = dark ? '#27272A' : '#E4E4E7';
+      const colLabel = dark ? '#3F3F46' : '#C8C8CC';
+      const srcFill  = dark ? '#131316' : '#EDEDF0';
+      const srcBdr   = dark ? '#27272A' : '#E4E4E7';
+      const lyrFill  = dark ? '#131316' : '#ECECF0';
+      const outFill  = dark ? '#131316' : '#ECECF0';
+      const edgeCol  = dark ? '#2A2A30' : '#DCDCE0';
+      const accent   = dark ? '#7DD3FC' : '#0369A1';
+      const textDim  = dark ? '#52525B' : '#A1A1AA';
+      const textMed  = dark ? '#A1A1AA' : '#52525B';
+
+      function particle(x1, y1, x2, y2, speed, phase) {
+        const t = ((tick * speed * 0.016 + phase) % 1);
+        return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+      }
+
+      return (
+        <div style={{ background: dark ? '#0A0A0B' : '#FAFAF9', width: '100%', padding: 24, transition: 'background 0.3s' }}>
+          <div style={{ background: bg, border: `1px solid ${bdr}`, borderRadius: 6, padding: '28px 0', overflow: 'hidden' }}>
+            <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+
+              {/* Column headers */}
+              <text x={SRC_X + SRC_W / 2 + 60} y="20" textAnchor="middle" fontFamily="JetBrains Mono,monospace" fontSize="9" fill={colLabel} letterSpacing="0.1em">SOURCES</text>
+              <text x={LYR_X + LYR_W / 2}       y="20" textAnchor="middle" fontFamily="JetBrains Mono,monospace" fontSize="9" fill={colLabel} letterSpacing="0.1em">xMAP LAYERS</text>
+              <text x={OUT_X + OUT_W / 2}        y="20" textAnchor="middle" fontFamily="JetBrains Mono,monospace" fontSize="9" fill={colLabel} letterSpacing="0.1em">INTEGRATIONS</text>
+
+              {/* All source→layer edges */}
+              {SOURCES.map((_, si) =>
+                LAYERS.map((layer, li) => (
+                  <line key={`sl${si}${li}`}
+                    x1={SRC_X + SRC_W} y1={srcY(si) + SRC_H / 2}
+                    x2={LYR_X}         y2={lyrY(li) + LYR_H / 2}
+                    stroke={hoverLayer === li ? layer.color : edgeCol}
+                    strokeWidth={hoverLayer === li ? 1 : 0.75}
+                    strokeDasharray="4 3"
+                    opacity={hoverLayer === li ? 0.5 : 0.7}/>
+                ))
+              )}
+
+              {/* Layer→output edges */}
+              {OUTPUTS.map((_, oi) => {
+                const li = OUTPUT_TARGET_LAYER[oi];
+                const col = LAYERS[li].color;
+                return (
+                  <line key={`lo${oi}`}
+                    x1={LYR_X + LYR_W} y1={lyrY(li) + LYR_H / 2}
+                    x2={OUT_X}          y2={outY(oi) + OUT_H / 2}
+                    stroke={hoverLayer === li ? col : dark ? 'rgba(125,211,252,0.2)' : 'rgba(3,105,161,0.18)'}
+                    strokeWidth={hoverLayer === li ? 1.2 : 0.75}
+                    strokeDasharray="4 3"
+                    opacity={0.85}/>
+                );
+              })}
+
+              {/* Source boxes */}
+              {SOURCES.map((s, si) => (
+                <g key={s}>
+                  <rect x={SRC_X} y={srcY(si)} width={SRC_W} height={SRC_H} rx="2"
+                    fill={srcFill} stroke={srcBdr} strokeWidth="1"/>
+                  <text x={SRC_X + SRC_W / 2} y={srcY(si) + 14} textAnchor="middle"
+                    fontFamily="JetBrains Mono,monospace" fontSize="9" fill={textDim}>{s}</text>
+                </g>
+              ))}
+
+              {/* Layer boxes */}
+              {LAYERS.map((layer, li) => {
+                const active = hoverLayer === li;
+                return (
+                  <g key={layer.label}
+                    onMouseEnter={() => setHL(li)}
+                    onMouseLeave={() => setHL(null)}
+                    style={{ cursor: 'pointer' }}>
+                    <rect x={LYR_X} y={lyrY(li)} width={LYR_W} height={LYR_H} rx="3"
+                      fill={active ? `${layer.color}20` : lyrFill}
+                      stroke={active ? layer.color : `${layer.color}55`}
+                      strokeWidth={active ? 1.5 : 1}
+                      style={{ transition: 'fill 0.2s, stroke 0.2s' }}/>
+                    <text x={LYR_X + LYR_W / 2} y={lyrY(li) + 17} textAnchor="middle"
+                      fontFamily="JetBrains Mono,monospace" fontSize="10"
+                      fill={active ? layer.color : textMed}
+                      style={{ transition: 'fill 0.2s' }}>{layer.label}</text>
+                  </g>
+                );
+              })}
+
+              {/* Output boxes */}
+              {OUTPUTS.map((o, oi) => {
+                const li = OUTPUT_TARGET_LAYER[oi];
+                return (
+                  <g key={o}>
+                    <rect x={OUT_X} y={outY(oi)} width={OUT_W} height={OUT_H} rx="3"
+                      fill={outFill}
+                      stroke={dark ? 'rgba(125,211,252,0.35)' : 'rgba(3,105,161,0.25)'}
+                      strokeWidth="1"/>
+                    <text x={OUT_X + OUT_W / 2} y={outY(oi) + 17} textAnchor="middle"
+                      fontFamily="JetBrains Mono,monospace" fontSize="9.5"
+                      fill={accent} fontWeight="500">{o}</text>
+                  </g>
+                );
+              })}
+
+              {/* Particles: source → layer (2 sets, staggered) */}
+              {SRC_PARTICLES.map(({ si, li, speed, phase }) => {
+                const { x, y } = particle(
+                  SRC_X + SRC_W, srcY(si) + SRC_H / 2,
+                  LYR_X,         lyrY(li) + LYR_H / 2,
+                  speed, phase
+                );
+                return <circle key={`sp1_${si}`} cx={x} cy={y} r="2.8" fill={LAYERS[li].color} opacity="0.9"/>;
+              })}
+              {SRC_PARTICLES2.map(({ si, li, speed, phase }) => {
+                const { x, y } = particle(
+                  SRC_X + SRC_W, srcY(si) + SRC_H / 2,
+                  LYR_X,         lyrY(li) + LYR_H / 2,
+                  speed, phase
+                );
+                return <circle key={`sp2_${si}`} cx={x} cy={y} r="2.2" fill={LAYERS[li].color} opacity="0.65"/>;
+              })}
+
+              {/* Particles: layer → output */}
+              {OUT_PARTICLES.map(({ oi, li, speed, phase }) => {
+                const { x, y } = particle(
+                  LYR_X + LYR_W, lyrY(li) + LYR_H / 2,
+                  OUT_X,          outY(oi) + OUT_H / 2,
+                  speed, phase
+                );
+                return <circle key={`op_${oi}`} cx={x} cy={y} r="2.8" fill={LAYERS[li].color} opacity="0.9"/>;
+              })}
+              {/* second set out particles, offset */}
+              {OUT_PARTICLES.map(({ oi, li, speed, phase }) => {
+                const { x, y } = particle(
+                  LYR_X + LYR_W, lyrY(li) + LYR_H / 2,
+                  OUT_X,          outY(oi) + OUT_H / 2,
+                  speed, phase + 0.5
+                );
+                return <circle key={`op2_${oi}`} cx={x} cy={y} r="2" fill={LAYERS[li].color} opacity="0.55"/>;
+              })}
+
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
