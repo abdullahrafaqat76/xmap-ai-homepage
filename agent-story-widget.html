@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Agent Story</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: transparent; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_DARK = urlTheme === 'dark';
+
+    const STEPS = [
+      { text: 'First, the agent locates the parcel at Bleecker & Carmine, NYC.', action: 'locate'   },
+      { text: 'It checks who owns it — and flags two recent transfers.',          action: 'owner'    },
+      { text: 'It counts foot traffic in a 500m radius. Washington Square Park drives strong daily flow.', action: 'mobility' },
+      { text: 'It measures car flow on adjacent streets.',                        action: 'traffic'  },
+      { text: 'It surveys 11 nearby cafés and maps demographic tier.',            action: 'poi'      },
+      { text: 'It returns a decision with full reasoning trace.',                 action: 'decision' },
+    ];
+
+    function AgentMap({ step, dark, tick }) {
+      const accent = dark ? '#7DD3FC' : '#0369A1';
+      const warm   = dark ? '#F59E0B' : '#B45309';
+      const gridL  = dark ? '#1E1E24' : '#DDDDE0';
+      const blockF = dark ? '#1C1C22' : '#EDEDF0';
+      const blockS = dark ? '#27272A' : '#D4D4D8';
+      const roadF  = dark ? '#1A1A20' : '#E8E8EC';
+      const bg     = dark ? '#131316' : '#F4F4F5';
+      const bdrC   = dark ? '#27272A' : '#E4E4E7';
+      const panBg  = dark ? '#0A0A0B' : '#FFFFFF';
+
+      return (
+        <div style={{ width: '100%', aspectRatio: '420/380', background: bg, borderRadius: 6, border: `1px solid ${bdrC}`, position: 'relative', overflow: 'hidden' }}>
+          <svg viewBox="0 0 420 380" style={{ width: '100%', height: '100%' }}>
+            <defs>
+              <radialGradient id="sh2" cx="50%" cy="50%" r="50%">
+                <stop offset="0%"   stopColor={accent} stopOpacity="0.28"/>
+                <stop offset="100%" stopColor={accent} stopOpacity="0"/>
+              </radialGradient>
+              <filter id="sg2">
+                <feGaussianBlur stdDeviation="4" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+
+            {/* Grid */}
+            {[60,120,180,240,300,360].map(x => <line key={`v${x}`} x1={x} y1="0" x2={x} y2="380" stroke={gridL} strokeWidth="1"/>)}
+            {[60,120,180,240,300,340].map(y => <line key={`h${y}`} x1="0" y1={y} x2="420" y2={y} stroke={gridL} strokeWidth="1"/>)}
+
+            {/* Roads */}
+            <rect x="120" y="0"   width="60" height="380" fill={roadF} opacity="0.8"/>
+            <rect x="0"   y="180" width="420" height="60" fill={roadF} opacity="0.8"/>
+
+            {/* City blocks */}
+            {[[10,10,100,160],[10,250,100,120],[190,10,100,160],[190,250,100,120],[300,10,110,160],[300,250,110,120]].map(([x,y,w,h],i) => (
+              <rect key={i} x={x+2} y={y+2} width={w-4} height={h-4} rx="2" fill={blockF} stroke={blockS} strokeWidth="0.75"/>
+            ))}
+
+            {/* Step 0+: target parcel highlight */}
+            <rect x="192" y="12" width="96" height="156" rx="2" fill="none"
+              stroke={step >= 0 ? accent : 'transparent'} strokeWidth="1.5"
+              opacity={step >= 0 ? 0.8 : 0}
+              style={{ transition: 'all 0.5s ease' }}/>
+
+            {/* Step 1: ownership — warm overlay */}
+            {step >= 1 && (
+              <rect x="192" y="12" width="96" height="156" rx="2"
+                fill={warm} stroke={warm} strokeWidth="1.5" opacity="0.18"
+                style={{ transition: 'all 0.5s ease' }}/>
+            )}
+
+            {/* Step 2: mobility — radial heatmap */}
+            {step >= 2 && <ellipse cx="240" cy="90" rx="100" ry="65" fill="url(#sh2)" opacity="0.85"/>}
+
+            {/* Step 3: car traffic — moving vehicles */}
+            {step >= 3 && [0,1,2,3].map(i => {
+              const x = (tick * 1.5 + i * 105) % 440 - 20;
+              return <rect key={i} x={x} y={195 + i * 6} width="10" height="5" rx="1.5" fill={warm} opacity="0.85"/>;
+            })}
+
+            {/* Step 4: POI cafés */}
+            {step >= 4 && [[80,80],[350,60],[80,290],[340,290],[80,150],[340,150],[150,50]].map(([cx,cy],i) => (
+              <g key={i} filter="url(#sg2)">
+                <circle cx={cx} cy={cy} r={7} fill={accent} opacity="0.12"/>
+                <circle cx={cx} cy={cy} r={3} fill={accent} opacity="0.9"/>
+              </g>
+            ))}
+            {step >= 4 && <text x="80" y="74" fontFamily="JetBrains Mono,monospace" fontSize="7.5" fill={accent} opacity="0.8">WSP 220m</text>}
+
+            {/* Step 5: decision panel */}
+            {step >= 5 && (
+              <g>
+                <rect x="8" y="8" width="175" height="110" rx="4" fill={panBg} stroke={accent} strokeWidth="1" opacity="0.97"/>
+                <text x="18" y="26"  fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={dark?'#52525B':'#A1A1AA'}>DECISION · 314 Bleecker</text>
+                <text x="18" y="44"  fontFamily="JetBrains Mono,monospace" fontSize="11" fill={accent} fontWeight="500">PROCEED</text>
+                <text x="18" y="60"  fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={dark?'#A1A1AA':'#52525B'}>confidence: 0.84</text>
+                <text x="18" y="76"  fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={dark?'#52525B':'#A1A1AA'}>action: lease, not buy</text>
+                <text x="18" y="92"  fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={dark?'#52525B':'#A1A1AA'}>zoning: C1-6A ✓</text>
+                <text x="18" y="108" fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={warm}>⚠ 11 competitors nearby</text>
+              </g>
+            )}
+
+            {/* Parcel pin — always visible */}
+            <circle cx="240" cy="90" r="16" fill="none" stroke={accent} strokeWidth="1.5"
+              opacity={step >= 0 ? 0.9 : 0} filter="url(#sg2)"/>
+            <circle cx="240" cy="90" r="3"  fill={accent} opacity={step >= 0 ? 0.85 : 0}/>
+
+            {/* Road label */}
+            <text x="148" y="376" fontFamily="JetBrains Mono,monospace" fontSize="8" fill={dark?'#3F3F46':'#C8C8CC'} textAnchor="middle">Bleecker</text>
+          </svg>
+
+          {/* Corner label */}
+          <div style={{ position:'absolute', top:8, right:10, fontFamily:"'JetBrains Mono',monospace", fontSize:9, color:dark?'#3F3F46':'#C8C8CC' }}>
+            Lower Manhattan · NYC
+          </div>
+        </div>
+      );
+    }
+
+    function Widget() {
+      const [dark, setDark]           = useState(INIT_DARK);
+      const [activeStep, setActive]   = useState(0);
+      const [tick, setTick]           = useState(0);
+      // Auto-advance timer
+      const timerRef = useRef(null);
+
+      useEffect(() => {
+        const id = setInterval(() => setTick(t => t + 1), 80);
+        return () => clearInterval(id);
+      }, []);
+
+      // Auto-advance through steps every 2.5s unless user clicked
+      const [userInteracted, setUserInteracted] = useState(false);
+      useEffect(() => {
+        if (userInteracted) return;
+        timerRef.current = setInterval(() => {
+          setActive(s => (s + 1) % STEPS.length);
+        }, 2500);
+        return () => clearInterval(timerRef.current);
+      }, [userInteracted]);
+
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') setDark(e.data.theme === 'dark');
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      useEffect(() => {
+        const report = () => {
+          try { window.parent.postMessage({ type:'xmap-resize', height: document.body.scrollHeight }, '*'); } catch(e) {}
+        };
+        report();
+        new ResizeObserver(report).observe(document.body);
+      }, []);
+
+      const accent     = dark ? '#7DD3FC' : '#0369A1';
+      const bg         = dark ? '#0D0D11' : '#F4F4F5';
+      const textPri    = dark ? '#F5F5F4' : '#18181B';
+      const textSec    = dark ? '#A1A1AA' : '#52525B';
+      const textMuted  = dark ? '#52525B' : '#A1A1AA';
+      const rowActBg   = dark ? '#131316' : '#ECECF0';
+      const rowActBdr  = dark ? '#27272A' : '#D4D4D8';
+      const dotDoneBg  = dark ? '#27272A' : '#D4D4D8';
+      const dotDoneBdr = dark ? '#3F3F46' : '#C8C8CC';
+
+      function handleClick(i) {
+        setUserInteracted(true);
+        clearInterval(timerRef.current);
+        setActive(i);
+      }
+
+      return (
+        <div style={{ background: bg, width: '100%', padding: '32px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 48, alignItems: 'start', transition: 'background 0.3s' }}>
+
+          {/* ── Left: steps ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {STEPS.map((step, i) => {
+              const active = i === activeStep;
+              const done   = i < activeStep;
+              return (
+                <div key={i} onClick={() => handleClick(i)}
+                  style={{
+                    padding: '16px 20px', borderRadius: 4, cursor: 'pointer',
+                    border: `1px solid ${active ? rowActBdr : 'transparent'}`,
+                    background: active ? rowActBg : 'transparent',
+                    transition: 'all 0.25s ease',
+                  }}>
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                    {/* Radio dot */}
+                    <div style={{
+                      width: 20, height: 20, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+                      background: active ? accent : done ? dotDoneBg : 'transparent',
+                      border: `1.5px solid ${active ? accent : dotDoneBdr}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'all 0.3s',
+                    }}>
+                      {done && (
+                        <svg width="10" height="8" viewBox="0 0 10 8">
+                          <path d="M1 4l3 3 5-6" stroke={dark?'#A1A1AA':'#52525B'} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                    {/* Text */}
+                    <span style={{
+                      fontFamily: "'Inter', sans-serif",
+                      fontSize: 14, lineHeight: 1.55,
+                      fontWeight: active ? 500 : 400,
+                      color: active ? textPri : done ? textMuted : textSec,
+                      transition: 'color 0.25s',
+                    }}>"{step.text}"</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Right: map (sticky) ── */}
+          <div style={{ position: 'sticky', top: 32 }}>
+            <AgentMap step={activeStep} dark={dark} tick={tick}/>
+          </div>
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
