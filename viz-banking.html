@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; overflow: hidden; }
+</style>
+</head><body>
+<canvas id="c" width="272" height="110" style="display:block"></canvas>
+<script>
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+const COLOR = '#FACC15';
+
+// Comparable properties as dots — x = distance from subject, y = value
+const COMPS = [
+  { x: 30,  y: 82 },
+  { x: 58,  y: 62 },
+  { x: 80,  y: 50 },
+  { x: 110, y: 72 },
+  { x: 138, y: 40 },
+  { x: 162, y: 55 },
+  { x: 190, y: 45 },
+  { x: 218, y: 68 },
+  { x: 248, y: 58 },
+  { x: 45,  y: 35 },
+  { x: 95,  y: 90 },
+  { x: 175, y: 88 },
+  { x: 240, y: 30 },
+];
+
+// Subject property — highlighted
+const SUBJECT = { x: 136, y: 28 };
+
+// Trend line points (linear fit, slightly downward right)
+const LINE = [{ x: 20, y: 95 }, { x: 260, y: 22 }];
+
+let tick = 0;
+
+function draw() {
+  ctx.clearRect(0, 0, 272, 110);
+
+  // Trend line
+  const lineReveal = Math.min(1, tick / 40);
+  if (lineReveal > 0) {
+    const ex = LINE[0].x + (LINE[1].x - LINE[0].x) * lineReveal;
+    const ey = LINE[0].y + (LINE[1].y - LINE[0].y) * lineReveal;
+    ctx.beginPath();
+    ctx.moveTo(LINE[0].x, LINE[0].y);
+    ctx.lineTo(ex, ey);
+    ctx.strokeStyle = COLOR;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Comp dots
+  COMPS.forEach((p, i) => {
+    const show = Math.min(1, Math.max(0, (tick - i * 3) / 12));
+    if (show <= 0) return;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = COLOR;
+    ctx.globalAlpha = 0.55 * show;
+    ctx.fill();
+  });
+
+  // Subject property — pulsing, brighter
+  const subjectIn = Math.min(1, Math.max(0, (tick - 50) / 15));
+  if (subjectIn > 0) {
+    const pulse = 1 + Math.sin(tick * 0.07) * 0.15;
+    // outer ring
+    ctx.beginPath();
+    ctx.arc(SUBJECT.x, SUBJECT.y, 10 * pulse, 0, Math.PI * 2);
+    ctx.strokeStyle = COLOR;
+    ctx.globalAlpha = 0.2 * subjectIn;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // dot
+    ctx.beginPath();
+    ctx.arc(SUBJECT.x, SUBJECT.y, 5.5 * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = COLOR;
+    ctx.globalAlpha = 0.95 * subjectIn;
+    ctx.fill();
+    // inner white
+    ctx.beginPath();
+    ctx.arc(SUBJECT.x, SUBJECT.y, 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.globalAlpha = 0.9 * subjectIn;
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 1;
+  tick++;
+  if (tick > 160) tick = 40;
+  requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body></html>

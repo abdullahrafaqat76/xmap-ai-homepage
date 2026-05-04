@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; overflow: hidden; }
+</style>
+</head><body>
+<canvas id="c" width="272" height="110" style="display:block"></canvas>
+<script>
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+const COLOR = '#F472B6';
+
+// Hub + spoke nodes — Miami delivery network
+const NODES = [
+  { x: 136, y: 55, r: 7,   hub: true  }, // central hub
+  { x: 48,  y: 28, r: 4.5, hub: false },
+  { x: 95,  y: 18, r: 4,   hub: false },
+  { x: 185, y: 22, r: 4.5, hub: false },
+  { x: 235, y: 48, r: 4,   hub: false },
+  { x: 210, y: 88, r: 4,   hub: false },
+  { x: 148, y: 95, r: 4.5, hub: false },
+  { x: 62,  y: 82, r: 4,   hub: false },
+  { x: 28,  y: 60, r: 3.5, hub: false },
+];
+
+// Edges from hub (index 0) to each spoke
+const EDGES = NODES.slice(1).map((n, i) => ({ a: 0, b: i + 1 }));
+// A few cross-links
+EDGES.push({ a: 1, b: 2 }, { a: 3, b: 4 }, { a: 6, b: 7 });
+
+// Animated particle per edge
+const PARTICLES = EDGES.map((e, i) => ({ edge: e, t: (i * 0.13) % 1, speed: 0.008 + Math.random() * 0.005 }));
+
+let tick = 0;
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function draw() {
+  ctx.clearRect(0, 0, 272, 110);
+
+  // Draw edges
+  EDGES.forEach(e => {
+    const a = NODES[e.a], b = NODES[e.b];
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = COLOR;
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  });
+
+  // Draw particles along edges
+  PARTICLES.forEach(p => {
+    p.t = (p.t + p.speed) % 1;
+    const a = NODES[p.edge.a], b = NODES[p.edge.b];
+    const px = lerp(a.x, b.x, p.t);
+    const py = lerp(a.y, b.y, p.t);
+    ctx.beginPath();
+    ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = COLOR;
+    ctx.globalAlpha = 0.9;
+    ctx.fill();
+  });
+
+  // Draw nodes
+  NODES.forEach((n, i) => {
+    const pulse = n.hub ? 1 + Math.sin(tick * 0.05) * 0.12 : 1;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = COLOR;
+    ctx.globalAlpha = n.hub ? 0.95 : 0.75;
+    ctx.fill();
+    if (n.hub) {
+      // inner dot
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.9;
+      ctx.fill();
+    }
+  });
+
+  ctx.globalAlpha = 1;
+  tick++;
+  requestAnimationFrame(draw);
+}
+
+draw();
+</script>
+</body></html>
