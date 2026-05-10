@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Live Demo</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html {
+      overflow-x: hidden;
+      width: 100%;
+    }
+    body {
+      background: transparent;
+      overflow-x: hidden;
+      width: 100%;
+      max-width: 100%;
+      -webkit-font-smoothing: antialiased;
+    }
+    #root {
+      width: 100%;
+      overflow-x: hidden;
+    }
+    @keyframes blink   { 0%,100%{opacity:1} 50%{opacity:0} }
+    @keyframes fade-up { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+    .trace-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #D4D4D8 transparent; }
+    .trace-scroll::-webkit-scrollbar { width: 4px; }
+    .trace-scroll::-webkit-scrollbar-thumb { background: #D4D4D8; border-radius: 2px; }
+    .trace-scroll.dark { scrollbar-color: #3F3F46 transparent; }
+    .trace-scroll.dark::-webkit-scrollbar-thumb { background: #3F3F46; }
+    input:focus { outline: none; }
+    input::placeholder { color: #A1A1AA; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    const INIT_DARK = urlTheme === 'dark';
+
+    const PRESETS = [
+      "Where should I open a coffee shop in SoHo?",
+      "Find underpriced parcels in Brooklyn near the L train",
+      "Score 200 5th Ave for a yoga studio concept",
+    ];
+
+    const FALLBACK_TRACE = [
+      { tool:'mobility_query',       desc:'Foot traffic 500m radius',         result:'11,400/day',                          status:'ok'   },
+      { tool:'poi_search',           desc:'Nearby cafés and coffee shops',     result:'8 competitors within 500m',           status:'warn' },
+      { tool:'demographics_profile', desc:'Block group income & age',          result:'Median HH income $98k, median age 31',status:'ok'   },
+      { tool:'parcel_value',         desc:'Current lease rates',               result:'$175/sqft/yr avg',                    status:'ok'   },
+      { tool:'access_isochrone',     desc:'Walk-time to transit',              result:'3min to nearest subway',              status:'ok'   },
+    ];
+    const FALLBACK_RESULT = {
+      decision:'PROCEED', confidence:0.79,
+      summary:'Strong foot traffic and demographics support the concept.',
+      recommended_action:'pursue lease negotiation',
+    };
+
+    const BP_WIDE = 680; // side-by-side map+trace above this
+
+    function AgentMap({ mapStep, resultStep, dark }) {
+      const accent = dark ? '#7DD3FC' : '#0369A1';
+      const gridL  = dark ? '#1C1C22' : '#E0E0E4';
+      const roadF  = dark ? '#1A1A20' : '#E8E8EC';
+      const blockF = dark ? '#1C1C22' : '#EDEDF0';
+      const blockS = dark ? '#27272A' : '#D4D4D8';
+      const panBg  = dark ? '#0A0A0B' : '#FFFFFF';
+
+      return (
+        <div style={{ position:'relative', width:'100%', height:'100%' }}>
+          <div style={{
+            position:'absolute', top:10, left:0, right:0, zIndex:2, padding:'0 12px',
+            fontFamily:"'JetBrains Mono',monospace", fontSize:9,
+            color: dark?'#3F3F46':'#C8C8CC', letterSpacing:'0.1em',
+            overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis',
+          }}>AGENT MAP · NYC</div>
+          <svg viewBox="0 0 420 380" style={{ width:'100%', height:'100%', display:'block' }}>
+            <defs>
+              <radialGradient id="dh" cx="50%" cy="50%" r="50%">
+                <stop offset="0%"   stopColor={accent} stopOpacity="0.25"/>
+                <stop offset="100%" stopColor={accent} stopOpacity="0"/>
+              </radialGradient>
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="4" result="b"/>
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+            </defs>
+            {[60,120,180,240,300,360].map(x => <line key={`v${x}`} x1={x} y1="0" x2={x} y2="380" stroke={gridL} strokeWidth="1"/>)}
+            {[60,120,180,240,300,340].map(y => <line key={`h${y}`} x1="0" y1={y} x2="420" y2={y} stroke={gridL} strokeWidth="1"/>)}
+            <rect x="120" y="0"   width="60" height="380" fill={roadF} opacity="0.7"/>
+            <rect x="0"   y="180" width="420" height="60"  fill={roadF} opacity="0.7"/>
+            {[[10,10,100,160],[10,250,100,120],[190,10,100,160],[190,250,100,120],[300,10,110,160],[300,250,110,120]].map(([x,y,w,h],i) => (
+              <rect key={i} x={x+2} y={y+2} width={w-4} height={h-4} rx="2" fill={blockF} stroke={blockS} strokeWidth="0.75"/>
+            ))}
+            {mapStep >= 0 && <ellipse cx="240" cy="90" rx="95" ry="60" fill="url(#dh)" opacity="0.85"/>}
+            {mapStep >= 0 && <>
+              <circle cx="240" cy="90" r="18" fill="none" stroke={accent} strokeWidth="1.5" opacity="0.9" filter="url(#glow)"/>
+              <circle cx="240" cy="90" r="4"  fill={accent}/>
+            </>}
+            {mapStep >= 2 && [[80,80],[350,60],[80,290],[340,290],[150,50],[310,290]].map(([cx,cy],i) => (
+              <circle key={i} cx={cx} cy={cy} r={5} fill={accent} opacity="0.9" filter="url(#glow)"/>
+            ))}
+            {resultStep && (
+              <g>
+                <rect x="10" y="292" width="168" height="74" rx="4" fill={panBg} stroke={accent} strokeWidth="1" opacity="0.97"/>
+                <text x="22" y="310" fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={dark?'#52525B':'#A1A1AA'}>DECISION</text>
+                <text x="22" y="329" fontFamily="JetBrains Mono,monospace" fontSize="13" fill={accent} fontWeight="600">{resultStep.decision}</text>
+                <text x="22" y="346" fontFamily="JetBrains Mono,monospace" fontSize="8"  fill={dark?'#A1A1AA':'#52525B'}>confidence: {resultStep.confidence}</text>
+              </g>
+            )}
+          </svg>
+        </div>
+      );
+    }
+
+    function Widget() {
+      const [dark, setDark]       = useState(INIT_DARK);
+      const [query, setQuery]     = useState('');
+      const [running, setRunning] = useState(false);
+      const [trace, setTrace]     = useState([]);
+      const [mapStep, setMapStep] = useState(-1);
+      const [width, setWidth]     = useState(window.innerWidth);
+      const traceRef = useRef(null);
+      const rootRef  = useRef(null);
+
+      // Track container width
+      useEffect(() => {
+        const ro = new ResizeObserver(entries => {
+          for (const e of entries) setWidth(e.contentRect.width);
+        });
+        if (rootRef.current) ro.observe(rootRef.current);
+        return () => ro.disconnect();
+      }, []);
+
+      // Theme sync
+      useEffect(() => {
+        const handler = e => {
+          if (e.data?.type === 'xmap-set-theme') setDark(e.data.theme === 'dark');
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+      }, []);
+
+      // Height reporting — debounced
+      useEffect(() => {
+        let timer;
+        const report = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            try {
+              window.parent.postMessage({ type:'xmap-resize', height: document.body.scrollHeight }, '*');
+            } catch(e) {}
+          }, 60);
+        };
+        report();
+        const ro = new ResizeObserver(report);
+        ro.observe(document.body);
+        return () => { ro.disconnect(); clearTimeout(timer); };
+      }, [dark, width, trace, running]);
+
+      // Auto-scroll trace
+      useEffect(() => {
+        if (traceRef.current) traceRef.current.scrollTop = traceRef.current.scrollHeight;
+      }, [trace]);
+
+      async function runQuery(q) {
+        if (!q.trim() || running) return;
+        setRunning(true);
+        setTrace([]);
+        setMapStep(-1);
+
+        const prompt = `You are an xMap AI agent with access to physical world data layers for US cities. When given a location and objective, respond with exactly this JSON format — no other text, no markdown:
+{"steps":[{"tool":"layer_name","desc":"short description of what you queried","result":"realistic metric like '14,200/day foot traffic'","status":"ok or warn"}],"decision":"PROCEED or CAUTION or PASS","confidence":0.84,"summary":"1 sentence outcome","recommended_action":"short action string"}
+Use realistic NYC / US-market data. Include 5–7 steps. Query: ${q}`;
+
+        try {
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 1000,
+              messages: [{ role:"user", content: prompt }],
+            }),
+          });
+          const data  = await res.json();
+          const raw   = data.content?.find(b => b.type === 'text')?.text || '';
+          const json  = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+          const steps = json.steps || [];
+          for (let i = 0; i < steps.length; i++) {
+            await new Promise(r => setTimeout(r, 650));
+            setTrace(prev => [...prev, steps[i]]);
+            setMapStep(i);
+          }
+          await new Promise(r => setTimeout(r, 500));
+          setTrace(prev => [...prev, { tool:'__result__', decision:json.decision, confidence:json.confidence, summary:json.summary, recommended_action:json.recommended_action }]);
+        } catch(e) {
+          for (let i = 0; i < FALLBACK_TRACE.length; i++) {
+            await new Promise(r => setTimeout(r, 600));
+            setTrace(prev => [...prev, FALLBACK_TRACE[i]]);
+            setMapStep(i);
+          }
+          await new Promise(r => setTimeout(r, 500));
+          setTrace(prev => [...prev, { tool:'__result__', ...FALLBACK_RESULT }]);
+        }
+        setRunning(false);
+      }
+
+      const resultStep = trace.find(t => t.tool === '__result__');
+      const traceSteps = trace.filter(t => t.tool !== '__result__');
+
+      const isWide   = width >= BP_WIDE;
+      const isMobile = width < 420;
+
+      const bg      = dark ? '#0D0D11' : '#F4F4F5';
+      const bdr     = dark ? '#27272A' : '#E4E4E7';
+      const panBg   = dark ? '#0A0A0B' : '#FFFFFF';
+      const accent  = dark ? '#7DD3FC' : '#0369A1';
+      const warm    = dark ? '#F59E0B' : '#B45309';
+      const textPri = dark ? '#F5F5F4' : '#18181B';
+      const textSec = dark ? '#A1A1AA' : '#52525B';
+      const textDim = dark ? '#52525B' : '#A1A1AA';
+
+      const pad = isMobile ? 14 : isWide ? 28 : 20;
+
+      // On mobile, trace panel height is auto (no scroll, just grows)
+      // On wide, fixed 320px with internal scroll
+      const PANEL_H = isWide ? 320 : 'auto';
+
+      return (
+        <div ref={rootRef} style={{
+          background: bg,
+          width: '100%',
+          maxWidth: '100%',
+          overflowX: 'hidden',
+          padding: pad,
+          transition: 'background 0.3s',
+        }}>
+
+          {/* ── Input row ── */}
+          <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && runQuery(query)}
+              placeholder={isMobile ? "Ask the agent a location question..." : "Where should I open a coffee shop in SoHo?"}
+              style={{
+                flex: 1,
+                minWidth: 0, // prevent overflow in flex
+                maxWidth: '100%',
+                fontFamily:"'JetBrains Mono',monospace",
+                fontSize: isMobile ? 12 : 13,
+                background: panBg,
+                border: `1px solid ${bdr}`,
+                color: textPri,
+                padding: isMobile ? '11px 14px' : '13px 18px',
+                borderRadius: 4,
+                width: isMobile ? '100%' : 'auto',
+              }}
+            />
+            <button
+              onClick={() => runQuery(query)}
+              disabled={running}
+              style={{
+                background: accent,
+                color: dark ? '#0A0A0B' : '#FFFFFF',
+                border: 'none',
+                padding: isMobile ? '11px 18px' : '13px 24px',
+                borderRadius: 4,
+                fontSize: isMobile ? 13 : 14,
+                fontWeight: 500,
+                cursor: running ? 'not-allowed' : 'pointer',
+                fontFamily:"'Inter',sans-serif",
+                opacity: running ? 0.65 : 1,
+                whiteSpace: 'nowrap',
+                transition: 'opacity 0.2s',
+                width: isMobile ? '100%' : 'auto',
+                flexShrink: 0,
+              }}
+            >{running ? 'Running…' : 'Run agent'}</button>
+          </div>
+
+          {/* ── Preset chips — scroll horizontally on mobile ── */}
+          <div style={{
+            display: 'flex',
+            gap: 6,
+            marginBottom: isMobile ? 16 : 22,
+            overflowX: 'auto',
+            paddingBottom: 2,
+            // hide scrollbar but allow scroll
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+          }}>
+            {PRESETS.map(p => (
+              <button key={p} onClick={() => { setQuery(p); runQuery(p); }} style={{
+                background: 'transparent',
+                border: `1px solid ${bdr}`,
+                color: textDim,
+                padding: '5px 12px',
+                borderRadius: 3,
+                fontFamily:"'JetBrains Mono',monospace",
+                fontSize: isMobile ? 10 : 11,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}>{p}</button>
+            ))}
+          </div>
+
+          {/* ── Map + Trace panels ── */}
+          <div style={{
+            display: isWide ? 'grid' : 'flex',
+            gridTemplateColumns: isWide ? '1fr 1fr' : undefined,
+            flexDirection: isWide ? undefined : 'column',
+            gap: isMobile ? 12 : 18,
+          }}>
+
+            {/* Map panel — aspect ratio keeps it square-ish */}
+            <div style={{
+              background: panBg,
+              border: `1px solid ${bdr}`,
+              borderRadius: 6,
+              overflow: 'hidden',
+              position: 'relative',
+              width: '100%',
+              maxWidth: '100%',
+              // On wide: fixed height. On narrow: aspect ratio.
+              height: isWide ? PANEL_H : undefined,
+              aspectRatio: isWide ? undefined : '420/320',
+            }}>
+              <AgentMap mapStep={mapStep} resultStep={resultStep} dark={dark}/>
+            </div>
+
+            {/* Trace panel */}
+            <div
+              ref={traceRef}
+              className={`trace-scroll${dark ? ' dark' : ''}`}
+              style={{
+                background: panBg,
+                border: `1px solid ${bdr}`,
+                borderRadius: 6,
+                height: isWide ? PANEL_H : 'auto',
+                minHeight: isWide ? undefined : 140,
+                overflowY: isWide ? 'auto' : 'visible',
+                padding: isMobile ? '14px 14px 14px 16px' : '18px 20px',
+                fontFamily:"'JetBrains Mono',monospace",
+                fontSize: isMobile ? 11 : 11.5,
+                lineHeight: 1.75,
+              }}
+            >
+              <div style={{ fontSize:9, letterSpacing:'0.1em', color:textDim, marginBottom:12 }}>AGENT REASONING TRACE</div>
+
+              {trace.length === 0 && !running && (
+                <div style={{ color: dark?'#27272A':'#D4D4D8', fontSize:12 }}>Enter a query above to start the agent.</div>
+              )}
+
+              {traceSteps.map((step, i) => (
+                <div key={i} style={{ marginBottom:12, animation:'fade-up 0.3s ease' }}>
+                  <div style={{ color:accent, marginBottom:2 }}>↳ {step.tool}</div>
+                  <div style={{ color:textDim, fontSize: isMobile?10:11 }}>{step.desc}</div>
+                  <div style={{ color: step.status === 'warn' ? warm : textSec, fontSize: isMobile?10:11, display:'flex', gap:5 }}>
+                    <span>{step.result}</span>
+                    <span>{step.status === 'warn' ? '⚠' : '✓'}</span>
+                  </div>
+                </div>
+              ))}
+
+              {running && <span style={{ color:accent, animation:'blink 1s step-end infinite' }}>▋</span>}
+
+              {resultStep && (
+                <div style={{ marginTop:14, paddingTop:12, borderTop:`1px solid ${bdr}` }}>
+                  <div style={{ color:textPri, fontWeight:500, marginBottom:3, fontSize: isMobile?11:11.5 }}>
+                    decision: {resultStep.decision} · confidence {resultStep.confidence}
+                  </div>
+                  {resultStep.recommended_action && (
+                    <div style={{ color:textSec, fontSize: isMobile?10:11 }}>recommended_action: {resultStep.recommended_action}</div>
+                  )}
+                  {resultStep.summary && (
+                    <div style={{ color:textDim, fontSize: isMobile?10:11, marginTop:5 }}>{resultStep.summary}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Footer ── */}
+          <div style={{
+            marginTop: 12,
+            fontFamily:"'JetBrains Mono',monospace",
+            fontSize: 10,
+            color: dark?'#27272A':'#D4D4D8',
+            textAlign: 'center',
+          }}>
+            Rate-limited · Cached for repeated prompts · Powered by xMap + Claude
+          </div>
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Widget/>);
+  </script>
+</body>
+</html>
