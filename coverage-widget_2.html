@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xMap Coverage</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html {
+      overflow-x: hidden;
+      width: 100%;
+    }
+    body {
+      background: transparent;
+      overflow-x: hidden;
+      width: 100%;
+      max-width: 100%;
+      -webkit-font-smoothing: antialiased;
+      /* NOT overflow:hidden — let height grow for iframe reporting */
+    }
+    #root {
+      width: 100%;
+      overflow-x: hidden;
+    }
+    button {
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+    }
+    .country { transition: fill 0.15s; }
+
+    /* Tab row scrolls horizontally on mobile instead of wrapping badly */
+    .tab-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      padding-bottom: 2px;
+      flex-wrap: nowrap;
+    }
+    .tab-row::-webkit-scrollbar { display: none; }
+
+    /* Chip row wraps on mobile */
+    .chip-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      padding: 8px 14px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    /* Responsive padding */
+    .wrap {
+      padding: 20px 16px 20px;
+    }
+    @media (min-width: 480px) {
+      .wrap { padding: 24px 24px 20px; }
+    }
+    @media (min-width: 768px) {
+      .wrap { padding: 28px 32px 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    const urlTheme = new URLSearchParams(window.location.search).get('theme');
+    let dark = urlTheme === 'dark';
+
+    const LAYER_COLORS = {
+      'POI density':            '#6b8cff',
+      'Mobility coverage':      '#F59E0B',
+      'Parcel completeness':    '#A78BFA',
+      'Demographic resolution': '#F472B6',
+    };
+
+    const COVERAGE = {
+      'POI density':            ['840','826','276','682','784','702','392','250','036','124','076','356','380','724','528'],
+      'Mobility coverage':      ['840','826','276','392','410','528','752','578','702','036','124','250','756'],
+      'Parcel completeness':    ['840','826','276','250','528','756','036','554','124','040'],
+      'Demographic resolution': ['840','826','250','392','276','356','076','484','410','124','036'],
+    };
+
+    const COUNTRY_DATA = {
+      '840':{name:'United States',pois:'1.2B',parcels:'98%',mobility:'available',demo:'block group'},
+      '826':{name:'United Kingdom',pois:'284M',parcels:'97%',mobility:'available',demo:'output area'},
+      '276':{name:'Germany',pois:'312M',parcels:'95%',mobility:'available',demo:'100m grid'},
+      '682':{name:'Saudi Arabia',pois:'124M',parcels:'94%',mobility:'available',demo:'district'},
+      '784':{name:'UAE',pois:'48M',parcels:'91%',mobility:'available',demo:'community'},
+      '702':{name:'Singapore',pois:'22M',parcels:'99%',mobility:'available',demo:'planning area'},
+      '392':{name:'Japan',pois:'538M',parcels:'88%',mobility:'available',demo:'mesh block'},
+      '250':{name:'France',pois:'298M',parcels:'96%',mobility:'available',demo:'IRIS'},
+      '036':{name:'Australia',pois:'194M',parcels:'93%',mobility:'available',demo:'SA1'},
+      '124':{name:'Canada',pois:'218M',parcels:'92%',mobility:'available',demo:'dissemination block'},
+      '076':{name:'Brazil',pois:'387M',parcels:'79%',mobility:'partial',demo:'setor censitário'},
+      '356':{name:'India',pois:'724M',parcels:'71%',mobility:'partial',demo:'town + ward'},
+      '380':{name:'Italy',pois:'198M',parcels:'89%',mobility:'available',demo:'sezione'},
+      '724':{name:'Spain',pois:'156M',parcels:'86%',mobility:'available',demo:'sección censal'},
+      '528':{name:'Netherlands',pois:'72M',parcels:'97%',mobility:'available',demo:'buurt'},
+      '410':{name:'South Korea',pois:'312M',parcels:'88%',mobility:'available',demo:'tong'},
+      '752':{name:'Sweden',pois:'48M',parcels:'94%',mobility:'available',demo:'Deso'},
+      '578':{name:'Norway',pois:'22M',parcels:'92%',mobility:'available',demo:'grunnkrets'},
+      '756':{name:'Switzerland',pois:'28M',parcels:'96%',mobility:'available',demo:'HEKTOR'},
+      '554':{name:'New Zealand',pois:'18M',parcels:'95%',mobility:'available',demo:'meshblock'},
+      '040':{name:'Austria',pois:'34M',parcels:'96%',mobility:'available',demo:'Zählsprengel'},
+      '484':{name:'Mexico',pois:'412M',parcels:'72%',mobility:'partial',demo:'AGEB'},
+    };
+
+    const METRICS = Object.keys(LAYER_COLORS);
+    let currentMetric = METRICS[0];
+    let worldData = null;
+
+    function hexRgba(hex, alpha) {
+      const h = hex.replace('#','');
+      const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+      return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    // Debounced height reporter
+    let reportTimer;
+    function reportHeight() {
+      clearTimeout(reportTimer);
+      reportTimer = setTimeout(() => {
+        try {
+          window.parent.postMessage({ type:'xmap-resize', height: document.body.scrollHeight }, '*');
+        } catch(e) {}
+      }, 60);
+    }
+
+    function buildLayout() {
+      const bg    = dark ? '#0A0A0B' : '#FAFAF9';
+      const bdr   = dark ? '#27272A' : '#E4E4E7';
+      const textD = dark ? '#52525B' : '#A1A1AA';
+
+      document.body.style.background   = bg;
+      document.body.style.transition   = 'background 0.3s';
+      document.getElementById('root').innerHTML = '';
+
+      const wrap = document.createElement('div');
+      wrap.className = 'wrap';
+
+      // ── Tab row (scrollable on mobile) ──────────────────────────
+      const tabRow = document.createElement('div');
+      tabRow.className = 'tab-row';
+      tabRow.style.marginBottom = '16px';
+
+      const layerLabel = document.createElement('span');
+      layerLabel.style.cssText = `
+        font-family:'JetBrains Mono',monospace;font-size:11px;
+        color:${textD};margin-right:4px;letter-spacing:.05em;
+        white-space:nowrap;flex-shrink:0;
+      `;
+      layerLabel.textContent = 'LAYER ·';
+      tabRow.appendChild(layerLabel);
+
+      METRICS.forEach(m => {
+        const btn = document.createElement('button');
+        const col = LAYER_COLORS[m];
+        const active = m === currentMetric;
+        btn.style.cssText = `
+          background:${active ? hexRgba(col, dark ? .14 : .18) : 'transparent'};
+          border:1px solid ${active ? hexRgba(col, dark ? .5 : .62) : bdr};
+          color:${active ? col : textD};
+          padding:5px 12px;border-radius:3px;
+          font-family:'JetBrains Mono',monospace;font-size:10.5px;
+          cursor:pointer;transition:all 0.2s;
+          white-space:nowrap;flex-shrink:0;
+        `;
+        btn.textContent = m;
+        btn.onclick = () => { currentMetric = m; buildLayout(); };
+        tabRow.appendChild(btn);
+      });
+      wrap.appendChild(tabRow);
+
+      // ── SVG map ──────────────────────────────────────────────────
+      const mapWrap = document.createElement('div');
+      mapWrap.style.cssText = `
+        position:relative;width:100%;max-width:100%;
+        margin-bottom:20px;border-radius:6px;overflow:hidden;
+      `;
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+      svg.id = 'map-svg';
+      svg.style.cssText = 'display:block;width:100%;max-width:100%;';
+      mapWrap.appendChild(svg);
+
+      // Tooltip — on mobile use tap instead of hover (handled in drawMap)
+      const tip = document.createElement('div');
+      tip.id = 'map-tooltip';
+      tip.style.cssText = `
+        display:none;position:absolute;pointer-events:none;z-index:20;
+        background:${dark?'#131316':'#FFFFFF'};
+        border:1px solid ${bdr};border-radius:4px;
+        padding:8px 12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+        color:${dark?'#F5F5F4':'#18181B'};
+        min-width:140px;max-width:200px;
+      `;
+      mapWrap.appendChild(tip);
+      wrap.appendChild(mapWrap);
+
+      // ── US deep-dive chips ───────────────────────────────────────
+      const col = LAYER_COLORS[currentMetric];
+
+      const usLabel = document.createElement('div');
+      usLabel.style.cssText = `
+        font-family:'JetBrains Mono',monospace;font-size:10px;
+        color:${textD};margin-bottom:12px;letter-spacing:.05em;
+      `;
+      usLabel.textContent = 'US DEEP-DIVE · strongest on every layer';
+      wrap.appendChild(usLabel);
+
+      const chipRow = document.createElement('div');
+      chipRow.className = 'chip-row';
+
+      [
+        {label:'NYC metro',        stat:'4.2M POIs · 100% parcel coverage'},
+        {label:'LA metro',         stat:'3.8M POIs · 100% parcel coverage'},
+        {label:'Top 50 US metros', stat:'all layers · complete'},
+      ].forEach(item => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.style.cssText = `
+          padding:8px 14px;
+          background:${hexRgba(col, dark ? .08 : .12)};
+          border:1px solid ${hexRgba(col, dark ? .28 : .38)};
+          border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+        `;
+        chip.innerHTML = `<span style="color:${col};font-weight:500">${item.label}</span><span style="color:${textD}"> · ${item.stat}</span>`;
+        chipRow.appendChild(chip);
+      });
+      wrap.appendChild(chipRow);
+
+      document.getElementById('root').appendChild(wrap);
+
+      // Draw map then report height
+      drawMap(svg, tip, col);
+    }
+
+    function drawMap(svgEl, tipEl, layerCol) {
+      const containerW = svgEl.parentElement.clientWidth || document.body.clientWidth || 360;
+      const isMobile   = containerW < 480;
+      // Map aspect: slightly taller on mobile for better visibility
+      const aspect     = isMobile ? 0.62 : 0.46;
+      const W = containerW;
+      const H = Math.round(W * aspect);
+
+      svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svgEl.setAttribute('height', H);
+
+      const active    = new Set(COVERAGE[currentMetric]);
+      const fillCov   = hexRgba(layerCol, dark ? 0.38 : 0.42);
+      const fillHover = hexRgba(layerCol, dark ? 0.65 : 0.70);
+      const fillBase  = dark ? '#1C1C21' : '#E2E2E8';
+      // Slightly more padding on mobile so map doesn't touch edges
+      const pad = isMobile ? 8 : 24;
+
+      const render = (world) => {
+        d3.select(svgEl).selectAll('*').remove();
+
+        const proj = d3.geoNaturalEarth1()
+          .fitExtent([[pad, pad], [W - pad, H - pad]], {type:'Sphere'});
+        const path = d3.geoPath().projection(proj);
+
+        const features = topojson.feature(world, world.objects.countries).features;
+
+        d3.select(svgEl).selectAll('.country')
+          .data(features).join('path')
+          .attr('class', 'country')
+          .attr('d', path)
+          .attr('fill', d => active.has(String(d.id).padStart(3,'0')) ? fillCov : fillBase)
+          .attr('stroke', 'none')
+          .style('cursor', d => active.has(String(d.id).padStart(3,'0')) ? 'pointer' : 'default')
+          .on('mouseenter touchstart', function(event, d) {
+            const iso = String(d.id).padStart(3,'0');
+            if (!active.has(iso)) return;
+            d3.select(this).attr('fill', fillHover);
+            const cd = COUNTRY_DATA[iso];
+            if (!cd) return;
+            const col   = LAYER_COLORS[currentMetric];
+            const textD = dark ? '#A1A1AA' : '#52525B';
+            // Position tooltip — clamp to right edge on mobile
+            const rect  = svgEl.getBoundingClientRect();
+            const ex    = event.offsetX !== undefined ? event.offsetX : (event.touches?.[0]?.clientX - rect.left || 0);
+            const ey    = event.offsetY !== undefined ? event.offsetY : (event.touches?.[0]?.clientY - rect.top  || 0);
+            const tipX  = Math.min(ex + 10, W - 210);
+            const tipY  = Math.max(ey - 10, 0);
+            tipEl.style.display = 'block';
+            tipEl.style.left    = tipX + 'px';
+            tipEl.style.top     = tipY + 'px';
+            tipEl.innerHTML = `
+              <div style="font-weight:500;margin-bottom:5px;font-size:11px">${cd.name}</div>
+              <div style="color:${currentMetric==='POI density'       ? col : textD};font-size:10px">POIs: ${cd.pois}</div>
+              <div style="color:${currentMetric==='Parcel completeness'? col : textD};font-size:10px">Parcels: ${cd.parcels}</div>
+              <div style="color:${currentMetric==='Mobility coverage'  ? col : textD};font-size:10px">Mobility: ${cd.mobility}</div>
+              <div style="color:${currentMetric==='Demographic resolution'? col : textD};font-size:10px">Demo: ${cd.demo}</div>
+            `;
+          })
+          .on('mousemove', function(event) {
+            const tipX = Math.min(event.offsetX + 10, W - 210);
+            tipEl.style.left = tipX + 'px';
+            tipEl.style.top  = (event.offsetY - 10) + 'px';
+          })
+          .on('mouseleave touchend', function(event, d) {
+            const iso = String(d.id).padStart(3,'0');
+            if (!active.has(iso)) return;
+            d3.select(this).attr('fill', fillCov);
+            tipEl.style.display = 'none';
+          });
+
+        // Report height after map renders
+        reportHeight();
+      };
+
+      if (worldData) {
+        render(worldData);
+      } else {
+        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+          .then(r => r.json())
+          .then(w => { worldData = w; render(w); })
+          .catch(() => {});
+      }
+    }
+
+    // Theme sync
+    window.addEventListener('message', e => {
+      if (e.data?.type === 'xmap-set-theme') {
+        dark = e.data.theme === 'dark';
+        buildLayout();
+      }
+    });
+
+    // Redraw map on resize (iframe width changes)
+    let resizeTimer;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const svg = document.getElementById('map-svg');
+        const tip = document.getElementById('map-tooltip');
+        if (svg && tip) drawMap(svg, tip, LAYER_COLORS[currentMetric]);
+        reportHeight();
+      }, 100);
+    });
+    ro.observe(document.body);
+
+    // Init
+    buildLayout();
+  </script>
+</body>
+</html>
